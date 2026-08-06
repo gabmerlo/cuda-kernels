@@ -1,4 +1,12 @@
+%%writefile matmul.cu
 #include <cstdio>
+#include <random>
+
+using namespace std;
+
+random_device rd;
+mt19937 gen(rd());
+uniform_real_distribution<float> dist(-2.0, 2.0);
 
 __global__ void matmul(float *mat1, float *mat2, float *result, int M_filas_1, int K_col_1, int M_filas_2, int K_col_2, int N){
 
@@ -9,7 +17,7 @@ __global__ void matmul(float *mat1, float *mat2, float *result, int M_filas_1, i
 
         int fil_num_1 = i/K_col_2;
         int col_num_1 = i - fil_num_1 * K_col_2;
-        float sum = 0.0;
+        float sum = 0.0f;
 
         for (int j = fil_num_1 * K_col_1; j < K_col_1*fil_num_1 + K_col_1; j++){
             
@@ -30,18 +38,18 @@ int main(){
 
     size_t bytes_n = N * sizeof(float);
     size_t bytes_m1 = M_fil_1*K_col_1*sizeof(float);
-    size_t bytes_m2 = M_fil_1*K_col_2*sizeof(float);
+    size_t bytes_m2 = M_fil_2*K_col_2*sizeof(float);
 
     float *h_mat1 = (float*)malloc(bytes_m1);
     float *h_mat2 = (float*)malloc(bytes_m2);
     float *h_result = (float*)malloc(bytes_n);
 
     for(int i = 0; i < M_fil_1*K_col_1; i++){
-        h_mat1[i] = 2.0;
+        h_mat1[i] = dist(gen);
     }
 
     for(int i = 0; i < M_fil_2*K_col_2; i++){
-        h_mat1[i] = 3.0;
+        h_mat2[i] = dist(gen);
     }
 
     float *d_mat1;
@@ -53,7 +61,7 @@ int main(){
     cudaMalloc(&d_result, bytes_n);
 
     cudaMemcpy(d_mat1, h_mat1, bytes_m1, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_mat2, h_mat1, bytes_m2, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_mat2, h_mat2, bytes_m2, cudaMemcpyHostToDevice);
 
     int threads = 1024;
     int blocks = (N + threads - 1) / threads;
