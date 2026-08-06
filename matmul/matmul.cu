@@ -1,4 +1,3 @@
-%%writefile matmul.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
