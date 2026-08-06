@@ -1,3 +1,4 @@
+%%writefile tiled_matmul.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
@@ -14,25 +15,22 @@ __global__ void matmul(float *mat1, float *mat2, float *result, int M_filas_1, i
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
     __shared__ float shared_memory_1[2048];
-    __shared__ float shared_memory_2[2048];
 
     if(i < N){
 
         int fil_num_1 = i/K_col_2;
         int col_num_1 = i - fil_num_1 * K_col_2;
+        
         float sum = 0.0f;
         
         shared_memory_1[threadIdx.x] = mat1[fil_num_1 * K_col_1 + threadIdx.x];
         shared_memory_1[threadIdx.x + 1024] = mat1[fil_num_1 * K_col_1 + threadIdx.x + 1024];
 
-        shared_memory_2[threadIdx.x] = mat2[col_num_1 + ((threadIdx.x)* (K_col_2))];
-        shared_memory_2[threadIdx.x + 1024] = mat2[col_num_1 + ((threadIdx.x)* (K_col_2)) + 1024*K_col_2];
-
         __syncthreads();
         
-        for (int j = 0; j < 2048; j++){
-            
-            sum = sum + shared_memory_1[j] * shared_memory_2[j];
+        for (int j = fil_num_1 * K_col_1; j < K_col_1*fil_num_1 + K_col_1; j++){
+
+            sum = sum + shared_memory_1[j - fil_num_1 * K_col_1] * mat2[col_num_1 + ((j - fil_num_1*K_col_1)* (K_col_2))];
 
     }
         result[i] = sum;
@@ -120,6 +118,9 @@ int main(){
 
     cudaMemcpy(h_result, d_result, bytes_n, cudaMemcpyDeviceToHost);
 
+    printf("GPU: %f %f %f\n", h_result[0], h_result[1], h_result[2]);
+    printf("CPU: %f %f %f\n", h_C_cpu[0],  h_C_cpu[1],  h_C_cpu[2]);
+    
     cudaFree(d_mat1);
     cudaFree(d_mat2);
     cudaFree(d_result);
