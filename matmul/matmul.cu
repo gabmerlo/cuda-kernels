@@ -1,6 +1,7 @@
 %%writefile matmul.cu
 #include <cstdio>
 #include <random>
+#include <chrono>
 
 using namespace std;
 
@@ -43,7 +44,9 @@ int main(){
     float *h_mat1 = (float*)malloc(bytes_m1);
     float *h_mat2 = (float*)malloc(bytes_m2);
     float *h_result = (float*)malloc(bytes_n);
-
+    float *h_C_cpu = (float*)malloc(bytes_n);
+    
+    
     for(int i = 0; i < M_fil_1*K_col_1; i++){
         h_mat1[i] = dist(gen);
     }
@@ -51,6 +54,21 @@ int main(){
     for(int i = 0; i < M_fil_2*K_col_2; i++){
         h_mat2[i] = dist(gen);
     }
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    for (int i = 0; i < M_fil_1; i++) {
+        for (int j = 0; j < K_col_2; j++) {
+            float sum = 0.0f;
+            for (int k = 0; k < K_col_1; k++)
+                sum += h_mat1[i*K_col_1 + k] * h_mat2[k*K_col_2 + j];
+            h_C_cpu[i*K_col_2 + j] = sum;
+        }
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double cpu_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    printf("CPU: %.1f ms\n", cpu_ms);
 
     float *d_mat1;
     float *d_mat2;
@@ -63,20 +81,38 @@ int main(){
     cudaMemcpy(d_mat1, h_mat1, bytes_m1, cudaMemcpyHostToDevice);
     cudaMemcpy(d_mat2, h_mat2, bytes_m2, cudaMemcpyHostToDevice);
 
+    
     int threads = 1024;
     int blocks = (N + threads - 1) / threads;
 
-    matmul<<<blocks,threads>>>(d_mat1, d_mat2, d_result, M_fil_1, K_col_1, M_fil_2, K_col_2, N);
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    for (int i = 0; i < 3; i++)
+        matmul<<<blocks,threads>>>(d_mat1, d_mat2, d_result, M_fil_1, K_col_1, M_fil_2, K_col_2, N);
+    cudaDeviceSynchronize();
+
+    cudaEventRecord(start);
+    for (int i = 0; i < 20; i++)
+        matmul<<<blocks,threads>>>(d_mat1, d_mat2, d_result, M_fil_1, K_col_1, M_fil_2, K_col_2, N);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float gpu_ms;
+    cudaEventElapsedTime(&gpu_ms, start, stop);
+    gpu_ms /= 20.0f;
+
+    double gflops = 2.0 * M_fil_1 * K_col_2 * K_col_1 / (gpu_ms / 1000.0) / 1e9;
+    printf("GPU: %.3f ms  (%.1f GFLOP/s)\n", gpu_ms, gflops);
+    printf("Speedup: %.1fx\n", cpu_ms / gpu_ms);
+
 
     cudaMemcpy(h_result, d_result, bytes_n, cudaMemcpyDeviceToHost);
 
     cudaFree(d_mat1);
     cudaFree(d_mat2);
     cudaFree(d_result);
-
-    for(int i = 0; i < N; i ++){
-        printf("%f\n", h_result[i]);
-    }
 
     return 0;
 }
