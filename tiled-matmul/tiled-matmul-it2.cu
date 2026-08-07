@@ -16,7 +16,7 @@ __global__ void matmul(float *mat1, float *mat2, float *result, int M_filas_1, i
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
     __shared__ float shared_memory_1[1024];
-    __shared__ float shared_memory_2[1024];
+    __shared__ float shared_memory_2[32*33];
 
     if(i < N){
 
@@ -36,11 +36,11 @@ __global__ void matmul(float *mat1, float *mat2, float *result, int M_filas_1, i
             int columna_bloque_2 = threadIdx.x/32;
             int fila_bloque_2 = threadIdx.x - columna_bloque_2*32;
 
-            shared_memory_2[threadIdx.x] = mat2[j*K_col_2*32 + block_col_num_2 * 32 + fila_bloque_2*K_col_2 + columna_bloque_2];
+            shared_memory_2[columna_bloque_2*33 + fila_bloque_2] = mat2[j*K_col_2*32 + block_col_num_2 * 32 + fila_bloque_2*K_col_2 + columna_bloque_2];
             __syncthreads();
 
             for (int k = 0; k < 32; k++){
-                sum = sum + shared_memory_1[fila_bloque_1*32 + k] * shared_memory_2[(threadIdx.x%32)*32 + k];
+                sum = sum + shared_memory_1[fila_bloque_1*32 + k] * shared_memory_2[(threadIdx.x%32)*33 + k];
             }
             __syncthreads();
         }
