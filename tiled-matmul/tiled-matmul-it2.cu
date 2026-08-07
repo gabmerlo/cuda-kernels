@@ -1,6 +1,8 @@
+%%writefile tiled_matmul.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
+#include <cmath>
 
 using namespace std;
 
@@ -18,15 +20,17 @@ __global__ void matmul(float *mat1, float *mat2, float *result, int M_filas_1, i
 
     if(i < N){
 
-        int block_fil_num_1 = i/(K_col_1*32);
-        int block_col_num_2 = i/(M_filas_2*32);
+        int block_fil_num_1 = blockIdx.x/32;
+        
+        int block_col_num_2 = blockIdx.x%32;
+        
         
         float sum = 0.0f;
         
         for (int j = 0; j < K_col_1/32; j++){
             
             int fila_bloque_1 = threadIdx.x/32;
-            shared_memory_1[threadIdx.x] = mat1[K_col_1*32*block_fil_num_1 + j*32 + fila_bloque_1*K_col_1 + threadIdx.x];
+            shared_memory_1[threadIdx.x] = mat1[K_col_1*32*block_fil_num_1 + j*32 + fila_bloque_1*K_col_1 + threadIdx.x%32];
             
             
             int columna_bloque_2 = threadIdx.x/32;
@@ -40,7 +44,7 @@ __global__ void matmul(float *mat1, float *mat2, float *result, int M_filas_1, i
             }
             __syncthreads();
         }
-        result[i] = sum;
+        result[(i/(K_col_2*32))*K_col_2*32 + ((i-(i/(K_col_2*32))*K_col_2*32)/1024)*32 + (threadIdx.x/32)*K_col_2 + threadIdx.x%32] = sum;
     }
 }
 
@@ -124,6 +128,20 @@ int main(){
 
 
     cudaMemcpy(h_result, d_result, bytes_n, cudaMemcpyDeviceToHost);
+    float max_error = 0;
+
+    for (int i = 0; i < N; i++)
+        max_error = fmaxf(max_error, fabsf(h_result[i] - h_C_cpu[i]));
+
+    printf("Error maximo CPU vs GPU: %e\n", max_error);
+    int errores = 0;
+
+    for (int i = 0; i < N; i++)
+        if (fabsf(h_result[i] - h_C_cpu[i]) > 0.001)
+            errores++;
+
+    printf("Errores: %d de %d\n", errores, N);
+
 
     printf("GPU: %f %f %f\n", h_result[0], h_result[1], h_result[2]);
     printf("CPU: %f %f %f\n", h_C_cpu[0],  h_C_cpu[1],  h_C_cpu[2]);
