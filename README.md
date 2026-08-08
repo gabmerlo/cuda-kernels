@@ -1,15 +1,12 @@
 # CUDA kernels journey
 
-This is a report on my path from my first vector addition to a handwritten **654.1 GFLOP/s** 32x32 1D memory matrix multiplication kernel on an NVIDIA T4.
+This README documents my path from my first vector addition to a handwritten **654.1 GFLOP/s** 32x32 matrix multiplication kernel on an NVIDIA T4.
 
-My code is not perfect, there are mistakes, missed optimizations, and I am deliberately keeping the intermediate versions for all my kernels. Because I not only want to show my current best number, but I also want to show the trail of indexing mistakes, incorrect assumptions, and small hardware aware changes that I made to get speedup after speedup.
+My code is not perfect, and I am deliberately keeping my mistakes and intermediate kernels because I want to show all my wrong assumptions, indexing problems, and the small hardware aware changes that I made behind every speedup.
 
-My clearest example has been my 32x32 1D memory tiled matrix multiplication. 
-I had not learned to use 2D shared-memory arrays yet, so I flattened every tile manually in 1D, including its transposition and padding, which made the indexing much harder.
+I think currently, my clearest example would be my 1D tiled matmul (which since I had not learned to use 2D shared memory arrays yet, I had to flatten every tile manually). 
 
-My first working 32×32 tiled kernel reached **195.1 GFLOP/s**, underperforming even my naïve matmul version's **355.9 GFLOP/s**, which should not be happening. 
-On this README, I'll be documenting optimizations like padding my shared memory to remove bank conflicts, which raised **195.1 GFLOP/s** to **470 GFLOP/s**. 
-Or remapping how each warp loads B from global memory, which then pushed it to **654.1 GFLOP/s**.
+Its first working version reached **195.1 GFLOP/s**, below my naïve matmul's **355.9 GFLOP/s**, but then removing bank conflicts raised it to **470 GFLOP/s**, and coalescing B loads pushed it to **654.1 GFLOP/s**.
 
 ## Performance journey on my 1D 32x32 Tiled Matmul
 
@@ -37,7 +34,7 @@ if (i < N) C[i] = A[i] + B[i];
 
 The operation is very simple, but it helped me land the correct mental model I needed before moving to a kernel where indexing and memory access were more difficult.
 
-### 2. Writing a naïve matmul—and discovering that my first bug was outside the kernel
+### 2. Writing a naïve matmul, and discovering that my first bug was outside the kernel
 
 In [`matmul/naive-matmul.cu`](matmul/naive-matmul.cu), each thread computes one output value. And basically my first ever attempt produced invalid results, including `inf`. And looking back through my commits, my matrix setup had three main separate problems:
 
