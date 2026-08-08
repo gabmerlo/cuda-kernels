@@ -21,22 +21,22 @@ __global__ void matmul(float *mat1, float *mat2, float *result, int M_filas_1, i
     if(i < N){
 
         int block_fil_num_1 = blockIdx.x/32;
-        
+
         int block_col_num_2 = blockIdx.x%32;
-        
-        
+
+
         float sum = 0.0f;
-        
+
         for (int j = 0; j < K_col_1/32; j++){
-            
+
             int fila_bloque_1 = threadIdx.x/32;
             shared_memory_1[threadIdx.x] = mat1[K_col_1*32*block_fil_num_1 + j*32 + fila_bloque_1*K_col_1 + threadIdx.x%32];
-            
-            
-            int columna_bloque_2 = threadIdx.x/32;
-            int fila_bloque_2 = threadIdx.x - columna_bloque_2*32;
 
-            shared_memory_2[columna_bloque_2*33 + fila_bloque_2] = mat2[j*K_col_2*32 + block_col_num_2 * 32 + fila_bloque_2*K_col_2 + columna_bloque_2];
+
+            int fila_carga_2    = threadIdx.x/32;   // 0..31, igual para todo el warp
+            int columna_carga_2 = threadIdx.x%32;   // 0..31, varía dentro del warp
+
+            shared_memory_2[columna_carga_2*33 + fila_carga_2] = mat2[j*K_col_2*32 + fila_carga_2*K_col_2 + block_col_num_2*32 + columna_carga_2];
             __syncthreads();
 
             for (int k = 0; k < 32; k++){
@@ -145,7 +145,7 @@ int main(){
 
     printf("GPU: %f %f %f\n", h_result[0], h_result[1], h_result[2]);
     printf("CPU: %f %f %f\n", h_C_cpu[0],  h_C_cpu[1],  h_C_cpu[2]);
-    
+
     cudaFree(d_mat1);
     cudaFree(d_mat2);
     cudaFree(d_result);
