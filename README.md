@@ -1,6 +1,6 @@
 # CUDA kernels journey
 
-> This is a report on my path from my first vector addition to a handwritten **654.1 GFLOP/s** 32x32 1D memory matrix multiplication kernel on an NVIDIA T4.
+This is a report on my path from my first vector addition to a handwritten **654.1 GFLOP/s** 32x32 1D memory matrix multiplication kernel on an NVIDIA T4.
 
 My code is not perfect, there are mistakes, missed optimizations, and I am deliberately keeping the intermediate versions for all my kernels. Because I not only want to show my current best number, but I also want to show the trail of indexing mistakes, incorrect assumptions, and small hardware aware changes that I made to get speedup after speedup.
 
