@@ -1,4 +1,12 @@
 #include <cstdio>
+#include <random>
+#include <chrono>
+
+using namespace std;
+
+random_device rd;
+mt19937 gen(rd());
+uniform_real_distribution<float> dist(-2.0, 2.0);
 
 __global__ void matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
 
@@ -17,10 +25,10 @@ __global__ void matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num_fil, 
 
 int main(){
 
-    int A_num_fil = 2000;
-    int A_num_col = 4000;
-    int B_num_fil = 4000;
-    int B_num_col = 2000;
+    int A_num_fil = 1024;
+    int A_num_col = 2048;
+    int B_num_fil = 2048;
+    int B_num_col = 1024;
     int N_A_B = A_num_fil*A_num_col;
     int N_C = A_num_fil*B_num_col;
 
@@ -32,9 +40,27 @@ int main(){
     float *h_C = (float*)malloc(bytes_C);
 
     for (int i = 0; i < N_A_B; i ++){
-        h_A[i] = 1.0;
-        h_B[i] = 2.0;
+        h_A[i] = dist(gen);
+        h_B[i] = dist(gen);
     }
+    
+    auto t0 = std::chrono::high_resolution_clock::now();
+    
+    for (int i = 0; i < A_num_fil; i++) {
+        for (int j = 0; j < B_num_col; j++) {
+            float sum = 0.0f;
+            for (int k = 0; k < A_num_col; k++)
+                sum += h_A[i*A_num_col + k] * h_B[k*B_num_col + j];
+            h_C[i*B_num_col + j] = sum;
+        }
+    }
+    for(int i = 0; i < 5; i ++){
+        printf("%f\n",h_C[i]);
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double cpu_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    printf("CPU: %.1f ms\n", cpu_ms);
     
     float *d_A;
     float *d_B;
@@ -53,7 +79,28 @@ int main(){
         (A_num_fil + threads.y - 1)/threads.y
     );
 
-    matmul_2d<<<blocks,threads>>>(A_num_fil, A_num_col, d_A, B_num_fil, B_num_col, d_B, d_C);
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    for (int i = 0; i < 3; i++)
+        matmul_2d<<<blocks,threads>>>(A_num_fil, A_num_col, d_A, B_num_fil, B_num_col, d_B, d_C);
+    cudaDeviceSynchronize();
+
+    cudaEventRecord(start);
+    for (int i = 0; i < 20; i++)
+        matmul_2d<<<blocks,threads>>>(A_num_fil, A_num_col, d_A, B_num_fil, B_num_col, d_B, d_C);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float gpu_ms;
+    cudaEventElapsedTime(&gpu_ms, start, stop);
+    gpu_ms /= 20.0f;
+
+    double gflops = 2.0 * A_num_fil * B_num_col * A_num_col / (gpu_ms / 1000.0) / 1e9;
+    printf("GPU: %.3f ms  (%.1f GFLOP/s)\n", gpu_ms, gflops);
+    printf("Speedup: %.1fx\n", cpu_ms / gpu_ms);
+
     
     cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost);
 
