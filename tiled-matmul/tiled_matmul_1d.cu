@@ -33,8 +33,8 @@ __global__ void matmul(float *mat1, float *mat2, float *result, int M_filas_1, i
             shared_memory_1[threadIdx.x] = mat1[K_col_1*32*block_fil_num_1 + j*32 + fila_bloque_1*K_col_1 + threadIdx.x%32];
 
 
-            int fila_carga_2    = threadIdx.x/32;   // 0..31, igual para todo el warp
-            int columna_carga_2 = threadIdx.x%32;   // 0..31, varía dentro del warp
+            int fila_carga_2    = threadIdx.x/32;   
+            int columna_carga_2 = threadIdx.x%32;   // 0..31, la parte que varía varía dentro del warp
 
             shared_memory_2[columna_carga_2*33 + fila_carga_2] = mat2[j*K_col_2*32 + fila_carga_2*K_col_2 + block_col_num_2*32 + columna_carga_2];
             __syncthreads();
