@@ -1,8 +1,10 @@
+%%writefile tiled-matmul-2d.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
 
 constexpr int tile_size = 16;
+
 using namespace std;
 
 random_device rd;
@@ -13,27 +15,27 @@ __global__ void tiled_matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num
 
     int row_pos = blockIdx.y * blockDim.y + threadIdx.y;
     int col_pos = blockIdx.x * blockDim.x + threadIdx.x;
+    float sum = 0.0f;
 
-    int block_row_pos = row_pos/tile_size;
-    int block_col_pos = col_pos/tile_size;
 
     __shared__ float shared_memory_1[tile_size][tile_size];
     __shared__ float shared_memory_2[tile_size][tile_size];
 
-    float sum = 0.0;
+    for (int i = 0; i < (A_num_col + tile_size - 1)/tile_size; i ++){
+        shared_memory_1[threadIdx.y][threadIdx.x] = (row_pos < A_num_fil && col_pos < A_num_col) ? A[row_pos*A_num_col + threadIdx.x + i*tile_size] : 0.0f;
+        shared_memory_2[threadIdx.y][threadIdx.x] = (row_pos < B_num_fil && col_pos < B_num_col) ? B[col_pos + B_num_col*i*tile_size + threadIdx.y*B_num_col] : 0.0f;
 
-    if(row_pos < A_num_fil && col_pos < B_num_col){
-        for (int i = 0; i < (A_num_col + tile_size - 1)/tile_size; i++){
+        __syncthreads();
 
-            shared_memory_1[threadIdx.y][threadIdx.x] = A[row_pos*A_num_col + i*tile_size + threadIdx.x];
-            shared_memory_2[threadIdx.y][threadIdx.x] = B[col_pos + i*tile_size*B_num_col + threadIdx.y*B_num_col];
-            __syncthreads();
-
-            for (int j = 0; j < tile_size; j ++){
-                sum = sum + shared_memory_1[threadIdx.y][j] * shared_memory_2[j][threadIdx.x];
-            }
-            __syncthreads();
+        for (int j = 0; j < tile_size; j++){
+            sum = sum + shared_memory_1[threadIdx.y][j] * shared_memory_2[j][threadIdx.x];
         }
+
+        __syncthreads();
+
+    }
+    if (row_pos < A_num_fil && col_pos < B_num_col){
+        C[row_pos*B_num_col + col_pos] = sum;
     }
 
     C[row_pos*B_num_col + col_pos] = sum;
