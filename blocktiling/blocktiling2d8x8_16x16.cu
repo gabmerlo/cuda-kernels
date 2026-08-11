@@ -28,15 +28,15 @@ __global__ void tiled_matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num
     int threadIdx_r4_4 = ((threadIdx.x/4) + threadIdx.y*2);
     int threadIdxy4_4 = (threadIdx.x*4 - (threadIdx_r4_4%2)*16 + 3) % 16;
 
-    int row_pos1 = blockIdx.y * blockDim.y + threadIdx_r4_1;
-    int row_pos2 = blockIdx.y * blockDim.y + threadIdx_r4_2;
-    int row_pos3 = blockIdx.y * blockDim.y + threadIdx_r4_3;
-    int row_pos4 = blockIdx.y * blockDim.y + threadIdx_r4_4;
+    int row_pos1 = blockIdx.y * tile_size + threadIdx_r4_1;
+    int row_pos2 = blockIdx.y * tile_size + threadIdx_r4_2;
+    int row_pos3 = blockIdx.y * tile_size + threadIdx_r4_3;
+    int row_pos4 = blockIdx.y * tile_size + threadIdx_r4_4;
 
-    int col_pos1 = blockIdx.x * blockDim.x + threadIdxy4_1;
-    int col_pos2 = blockIdx.x * blockDim.x + threadIdxy4_2;
-    int col_pos3 = blockIdx.x * blockDim.x + threadIdxy4_3;
-    int col_pos4 = blockIdx.x * blockDim.x + threadIdxy4_4;
+    int col_pos1 = blockIdx.x * tile_size + threadIdxy4_1;
+    int col_pos2 = blockIdx.x * tile_size + threadIdxy4_2;
+    int col_pos3 = blockIdx.x * tile_size + threadIdxy4_3;
+    int col_pos4 = blockIdx.x * tile_size + threadIdxy4_4;
 
     __shared__ float shared_memory_1[tile_size][tile_size];
     __shared__ float shared_memory_2[tile_size][tile_size];
@@ -48,18 +48,20 @@ __global__ void tiled_matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num
         shared_memory_1[threadIdx_r4_4][threadIdxy4_4] = (row_pos4 < A_num_fil && col_pos4 < A_num_col) ? A[row_pos4*A_num_col + threadIdxy4_4 + i*tile_size] : 0.0f;
 
         
-        shared_memory_2[threadIdx.y][threadIdx.x] = (row_pos1 < B_num_fil && col_pos1 < B_num_col) ? B[col_pos1 + B_num_col*i*tile_size + threadIdxy4_1*B_num_col] : 0.0f;
-        shared_memory_2[threadIdx.y][threadIdx.x] = (row_pos2 < B_num_fil && col_pos2 < B_num_col) ? B[col_pos2 + B_num_col*i*tile_size + threadIdxy4_2*B_num_col] : 0.0f;
-        shared_memory_2[threadIdx.y][threadIdx.x] = (row_pos3 < B_num_fil && col_pos3 < B_num_col) ? B[col_pos3 + B_num_col*i*tile_size + threadIdxy4_3*B_num_col] : 0.0f;
-        shared_memory_2[threadIdx.y][threadIdx.x] = (row_pos4 < B_num_fil && col_pos3 < B_num_col) ? B[col_pos3 + B_num_col*i*tile_size + threadIdxy4_4*B_num_col] : 0.0f;
+        shared_memory_2[threadIdx_r4_1][threadIdxy4_1] = (i*tile_size + threadIdx_r4_1 < B_num_fil && col_pos1 < B_num_col) ? B[(i*tile_size + threadIdx_r4_1)*B_num_col + col_pos1] : 0.0f;
+        shared_memory_2[threadIdx_r4_2][threadIdxy4_2] = (i*tile_size + threadIdx_r4_2 < B_num_fil && col_pos2 < B_num_col) ? B[(i*tile_size + threadIdx_r4_2)*B_num_col + col_pos2] : 0.0f;
+        shared_memory_2[threadIdx_r4_3][threadIdxy4_3] =(i*tile_size + threadIdx_r4_3 < B_num_fil && col_pos3 < B_num_col)? B[(i*tile_size + threadIdx_r4_3)*B_num_col + col_pos3]: 0.0f;
+        shared_memory_2[threadIdx_r4_4][threadIdxy4_4] =(i*tile_size + threadIdx_r4_4 < B_num_fil && col_pos4 < B_num_col)? B[(i*tile_size + threadIdx_r4_4)*B_num_col + col_pos4]: 0.0f;
 
         __syncthreads();
+        int local_col_pos = (threadIdx.x + (threadIdx.y%2)*8);
+        int local_row_pos = (threadIdx.y/2) * 4;
 
         for (int j = 0; j < tile_size; j++){
-            sum1 = sum1 + shared_memory_1[threadIdx_r4_1][j] * shared_memory_2[j][threadIdx.x];
-            sum2 = sum2 + shared_memory_1[threadIdx_r4_2][j] * shared_memory_2[j][threadIdx.x];
-            sum3 = sum3 + shared_memory_1[threadIdx_r4_3][j] * shared_memory_2[j][threadIdx.x];
-            sum4 = sum4 + shared_memory_1[threadIdx_r4_4][j] * shared_memory_2[j][threadIdx.x];
+            sum1 = sum1 + shared_memory_1[local_row_pos][j] * shared_memory_2[j][local_col_pos];
+            sum2 = sum2 + shared_memory_1[local_row_pos + 1][j] * shared_memory_2[j][local_col_pos];
+            sum3 = sum3 + shared_memory_1[local_row_pos + 2][j] * shared_memory_2[j][local_col_pos];
+            sum4 = sum4 + shared_memory_1[local_row_pos + 3][j] * shared_memory_2[j][local_col_pos];
         }
 
         __syncthreads();
@@ -72,19 +74,19 @@ __global__ void tiled_matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num
     int col_pos = blockIdx.x * tile_size + local_col_pos;
 
 
-    if (row_pos1 < A_num_fil && col_pos1 < B_num_col){
+    if (row_pos < A_num_fil && col_pos < B_num_col){
         C[row_pos*B_num_col + col_pos] = sum1;
     } 
-    if (row_pos2 < A_num_fil && col_pos2 < B_num_col){
-        C[row_pos*B_num_col + col_pos + B_num_col] = sum2;
+    if (row_pos + 1 < A_num_fil && col_pos < B_num_col){
+        C[(row_pos+1)*B_num_col + col_pos] = sum2;
     } 
 
-    if (row_pos3 < A_num_fil && col_pos3 < B_num_col){
-        C[row_pos*B_num_col + col_pos + B_num_col*2] = sum3;
+    if (row_pos + 2 < A_num_fil && col_pos < B_num_col){
+        C[(row_pos+2)*B_num_col + col_pos] = sum3;
     } 
 
-    if (row_pos4 < A_num_fil && col_pos4 < B_num_col){
-        C[row_pos*B_num_col + col_pos + B_num_col*3] = sum4;
+    if (row_pos + 3 < A_num_fil && col_pos < B_num_col){
+        C[(row_pos+3)*B_num_col + col_pos] = sum4;
     } 
 
 }
@@ -146,16 +148,24 @@ int main(){
 
     dim3 threads(8,8);
     dim3 blocks(
-        (B_num_col + threads.x - 1)/threads.x,
-        (A_num_fil + threads.y - 1)/threads.y
+        (B_num_col + threads.x - 1)/tile_size,
+        (A_num_fil + threads.y - 1)/tile_size
     );
 
     for (int i = 0; i < 3; i++)
-        tiled_matmul_2d<<<blocks,threads>>>(A_num_fil, A_num_col, d_A, B_num_fil, B_num_col, d_B, d_C);
+        tiled_matmul_2d<<<blocks,threads>>>(
+            A_num_fil, A_num_col, d_A,
+            B_num_fil, B_num_col, d_B, d_C
+        );
 
     cudaDeviceSynchronize();
 
-    auto gpu_t0 = std::chrono::steady_clock::now();
+
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
 
     for (int i = 0; i < 20; i++)
         tiled_matmul_2d<<<blocks,threads>>>(
@@ -163,25 +173,24 @@ int main(){
             B_num_fil, B_num_col, d_B, d_C
         );
 
-    cudaError_t err = cudaDeviceSynchronize();
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
 
-    auto gpu_t1 = std::chrono::steady_clock::now();
+    float gpu_ms;
+    cudaEventElapsedTime(&gpu_ms, start, stop);
 
-    double gpu_total_ms =
-        std::chrono::duration<double, std::milli>(gpu_t1 - gpu_t0).count();
+    gpu_ms /= 20.0f;
 
-    double gpu_ms = gpu_total_ms / 20.0;
-
-    printf("Tiempo TOTAL 20 kernels: %.9f ms\n", gpu_total_ms);
-    printf("Tiempo por kernel: %.9f ms\n", gpu_ms);
-    printf("cudaDeviceSynchronize: %s\n", cudaGetErrorString(err));
-
-    //double gflops =
+    double gflops =
         2.0 * A_num_fil * B_num_col * A_num_col
-        / (gpu_ms / 1000.0) / 1e9;
+        / (gpu_ms / 1000.0)
+        / 1e9;
 
-    //printf("GPU: %.3f ms  (%.1f GFLOP/s)\n", gpu_ms, gflops);
+    printf("GPU: %.3f ms  (%.1f GFLOP/s)\n", gpu_ms, gflops);
     printf("Speedup: %.1fx\n", cpu_ms / gpu_ms);
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 
 
     cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost);
