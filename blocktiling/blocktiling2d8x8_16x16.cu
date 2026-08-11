@@ -10,7 +10,6 @@ random_device rd;
 mt19937 gen(rd());
 uniform_real_distribution<float> dist(-2.0, 2.0);
 
-
 __global__ void tiled_matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
 
     float sum1 = 0.0f;
@@ -18,14 +17,16 @@ __global__ void tiled_matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num
     float sum3 = 0.0f;
     float sum4 = 0.0f;
 
-    int threadIdx_r4_1 = (threadIdx.x + threadIdx.y*8)/16;
-    int threadIdxy4_1 = (threadIdx.x + (threadIdx.y%2)*8) % 16;
-    int threadIdx_r4_2 = (threadIdx.x + threadIdx.y*8 + 1)/16;
-    int threadIdxy4_2 = (threadIdx.x + (threadIdx.y%2)*8 +1) % 16;
-    int threadIdx_r4_3 = (threadIdx.x + threadIdx.y*8 + 2)/16;
-    int threadIdxy4_3 = (threadIdx.x + (threadIdx.y%2)*8 + 2) % 16;
-    int threadIdx_r4_4 = (threadIdx.x + threadIdx.y*8 + 3)/16;
-    int threadIdxy4_4 = (threadIdx.x + (threadIdx.y%2)*8 +3) % 16;
+
+
+    int threadIdx_r4_1 = ((threadIdx.x/4) + threadIdx.y*2);
+    int threadIdxy4_1 = (threadIdx.x*4 - (threadIdx_r4_1%2)*16) % 16;
+    int threadIdx_r4_2 = ((threadIdx.x/4) + threadIdx.y*2);
+    int threadIdxy4_2 = (threadIdx.x*4 - (threadIdx_r4_2%2)*16 + 1) % 16;
+    int threadIdx_r4_3 = ((threadIdx.x/4) + threadIdx.y*2);
+    int threadIdxy4_3 = (threadIdx.x*4 - (threadIdx_r4_3%2)*16 + 2) % 16;
+    int threadIdx_r4_4 = ((threadIdx.x/4) + threadIdx.y*2);
+    int threadIdxy4_4 = (threadIdx.x*4 - (threadIdx_r4_4%2)*16 + 3) % 16;
 
     int row_pos1 = blockIdx.y * blockDim.y + threadIdx_r4_1;
     int row_pos2 = blockIdx.y * blockDim.y + threadIdx_r4_2;
@@ -56,9 +57,9 @@ __global__ void tiled_matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num
 
         for (int j = 0; j < tile_size; j++){
             sum1 = sum1 + shared_memory_1[threadIdx_r4_1][j] * shared_memory_2[j][threadIdx.x];
-            sum2 = sum2 + shared_memory_1[threadIdx_r4_1+1][j] * shared_memory_2[j][threadIdx.x];
-            sum3 = sum3 + shared_memory_1[threadIdx_r4_1+2][j] * shared_memory_2[j][threadIdx.x];
-            sum4 = sum4 + shared_memory_1[threadIdx_r4_1+3][j] * shared_memory_2[j][threadIdx.x];
+            sum2 = sum2 + shared_memory_1[threadIdx_r4_2][j] * shared_memory_2[j][threadIdx.x];
+            sum3 = sum3 + shared_memory_1[threadIdx_r4_3][j] * shared_memory_2[j][threadIdx.x];
+            sum4 = sum4 + shared_memory_1[threadIdx_r4_4][j] * shared_memory_2[j][threadIdx.x];
         }
 
         __syncthreads();
