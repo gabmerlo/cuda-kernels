@@ -2,7 +2,9 @@
 #include <random>
 #include <chrono>
 
-constexpr int tile_size = 16;
+constexpr int BM = 16;
+constexpr int BN = 16;
+constexpr int BK = 16;
 
 using namespace std;
 
@@ -18,7 +20,7 @@ __global__ void tiled_matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num
     float sum4 = 0.0f;
 
 
-
+    
     int threadIdx_r4_1 = ((threadIdx.x/4) + threadIdx.y*2);
     int threadIdxy4_1 = (threadIdx.x*4 - (threadIdx_r4_1%2)*16) % 16;
     int threadIdx_r4_2 = ((threadIdx.x/4) + threadIdx.y*2);
@@ -28,36 +30,37 @@ __global__ void tiled_matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num
     int threadIdx_r4_4 = ((threadIdx.x/4) + threadIdx.y*2);
     int threadIdxy4_4 = (threadIdx.x*4 - (threadIdx_r4_4%2)*16 + 3) % 16;
 
-    int row_pos1 = blockIdx.y * tile_size + threadIdx_r4_1;
-    int row_pos2 = blockIdx.y * tile_size + threadIdx_r4_2;
-    int row_pos3 = blockIdx.y * tile_size + threadIdx_r4_3;
-    int row_pos4 = blockIdx.y * tile_size + threadIdx_r4_4;
+    int row_pos1 = blockIdx.y * BM + threadIdx_r4_1;
+    int row_pos2 = blockIdx.y * BM + threadIdx_r4_2;
+    int row_pos3 = blockIdx.y * BM + threadIdx_r4_3;
+    int row_pos4 = blockIdx.y * BM + threadIdx_r4_4;
 
-    int col_pos1 = blockIdx.x * tile_size + threadIdxy4_1;
-    int col_pos2 = blockIdx.x * tile_size + threadIdxy4_2;
-    int col_pos3 = blockIdx.x * tile_size + threadIdxy4_3;
-    int col_pos4 = blockIdx.x * tile_size + threadIdxy4_4;
+    int col_pos1 = blockIdx.x * BN + threadIdxy4_1;
+    int col_pos2 = blockIdx.x * BN + threadIdxy4_2;
+    int col_pos3 = blockIdx.x * BN + threadIdxy4_3;
+    int col_pos4 = blockIdx.x * BN + threadIdxy4_4;
 
-    __shared__ float shared_memory_1[tile_size][tile_size];
-    __shared__ float shared_memory_2[tile_size][tile_size];
+    __shared__ float shared_memory_1[BM][BK];
+    __shared__ float shared_memory_2[BK][BN];
 
-    for (int i = 0; i < (A_num_col + tile_size - 1)/tile_size; i ++){
-        shared_memory_1[threadIdx_r4_1][threadIdxy4_1] = (row_pos1 < A_num_fil && col_pos1 < A_num_col) ? A[row_pos1*A_num_col + threadIdxy4_1 + i*tile_size] : 0.0f;
-        shared_memory_1[threadIdx_r4_2][threadIdxy4_2] = (row_pos2 < A_num_fil && col_pos2 < A_num_col) ? A[row_pos2*A_num_col + threadIdxy4_2 + i*tile_size] : 0.0f;
-        shared_memory_1[threadIdx_r4_3][threadIdxy4_3] = (row_pos3 < A_num_fil && col_pos3 < A_num_col) ? A[row_pos3*A_num_col + threadIdxy4_3 + i*tile_size] : 0.0f;
-        shared_memory_1[threadIdx_r4_4][threadIdxy4_4] = (row_pos4 < A_num_fil && col_pos4 < A_num_col) ? A[row_pos4*A_num_col + threadIdxy4_4 + i*tile_size] : 0.0f;
+    for (int i = 0; i < (A_num_col + BK - 1)/BK; i ++){
+       
+        shared_memory_1[threadIdx_r4_1][threadIdxy4_1] = (row_pos1 < A_num_fil && col_pos1 < A_num_col) ? A[row_pos1*A_num_col + threadIdxy4_1 + i*BK] : 0.0f;
+        shared_memory_1[threadIdx_r4_2][threadIdxy4_2] = (row_pos2 < A_num_fil && col_pos2 < A_num_col) ? A[row_pos2*A_num_col + threadIdxy4_2 + i*BK] : 0.0f;
+        shared_memory_1[threadIdx_r4_3][threadIdxy4_3] = (row_pos3 < A_num_fil && col_pos3 < A_num_col) ? A[row_pos3*A_num_col + threadIdxy4_3 + i*BK] : 0.0f;
+        shared_memory_1[threadIdx_r4_4][threadIdxy4_4] = (row_pos4 < A_num_fil && col_pos4 < A_num_col) ? A[row_pos4*A_num_col + threadIdxy4_4 + i*BK] : 0.0f;
 
         
-        shared_memory_2[threadIdx_r4_1][threadIdxy4_1] = (i*tile_size + threadIdx_r4_1 < B_num_fil && col_pos1 < B_num_col) ? B[(i*tile_size + threadIdx_r4_1)*B_num_col + col_pos1] : 0.0f;
-        shared_memory_2[threadIdx_r4_2][threadIdxy4_2] = (i*tile_size + threadIdx_r4_2 < B_num_fil && col_pos2 < B_num_col) ? B[(i*tile_size + threadIdx_r4_2)*B_num_col + col_pos2] : 0.0f;
-        shared_memory_2[threadIdx_r4_3][threadIdxy4_3] =(i*tile_size + threadIdx_r4_3 < B_num_fil && col_pos3 < B_num_col)? B[(i*tile_size + threadIdx_r4_3)*B_num_col + col_pos3]: 0.0f;
-        shared_memory_2[threadIdx_r4_4][threadIdxy4_4] =(i*tile_size + threadIdx_r4_4 < B_num_fil && col_pos4 < B_num_col)? B[(i*tile_size + threadIdx_r4_4)*B_num_col + col_pos4]: 0.0f;
+        shared_memory_2[threadIdx_r4_1][threadIdxy4_1] = (i*BK + threadIdx_r4_1 < B_num_fil && col_pos1 < B_num_col) ? B[(i*BK + threadIdx_r4_1)*B_num_col + col_pos1] : 0.0f;
+        shared_memory_2[threadIdx_r4_2][threadIdxy4_2] = (i*BK + threadIdx_r4_2 < B_num_fil && col_pos2 < B_num_col) ? B[(i*BK + threadIdx_r4_2)*B_num_col + col_pos2] : 0.0f;
+        shared_memory_2[threadIdx_r4_3][threadIdxy4_3] =(i*BK + threadIdx_r4_3 < B_num_fil && col_pos3 < B_num_col)? B[(i*BK + threadIdx_r4_3)*B_num_col + col_pos3]: 0.0f;
+        shared_memory_2[threadIdx_r4_4][threadIdxy4_4] =(i*BK + threadIdx_r4_4 < B_num_fil && col_pos4 < B_num_col)? B[(i*BK + threadIdx_r4_4)*B_num_col + col_pos4]: 0.0f;
 
         __syncthreads();
         int local_col_pos = (threadIdx.x + (threadIdx.y%2)*8);
         int local_row_pos = (threadIdx.y/2) * 4;
 
-        for (int j = 0; j < tile_size; j++){
+        for (int j = 0; j < BK; j++){
             sum1 = sum1 + shared_memory_1[local_row_pos][j] * shared_memory_2[j][local_col_pos];
             sum2 = sum2 + shared_memory_1[local_row_pos + 1][j] * shared_memory_2[j][local_col_pos];
             sum3 = sum3 + shared_memory_1[local_row_pos + 2][j] * shared_memory_2[j][local_col_pos];
@@ -70,8 +73,8 @@ __global__ void tiled_matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num
 
     int local_col_pos = (threadIdx.x + (threadIdx.y%2)*8);
     int local_row_pos = (threadIdx.y/2) * 4;
-    int row_pos = blockIdx.y * tile_size + local_row_pos;
-    int col_pos = blockIdx.x * tile_size + local_col_pos;
+    int row_pos = blockIdx.y * BM + local_row_pos;
+    int col_pos = blockIdx.x * BN + local_col_pos;
 
 
     if (row_pos < A_num_fil && col_pos < B_num_col){
@@ -148,8 +151,8 @@ int main(){
 
     dim3 threads(8,8);
     dim3 blocks(
-        (B_num_col + threads.x - 1)/tile_size,
-        (A_num_fil + threads.y - 1)/tile_size
+        (B_num_col + threads.x - 1)/BN,
+        (A_num_fil + threads.y - 1)/BM
     );
 
     for (int i = 0; i < 3; i++)
