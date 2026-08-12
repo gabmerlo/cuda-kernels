@@ -151,8 +151,8 @@ int main(){
 
     dim3 threads(8,8);
     dim3 blocks(
-        (B_num_col + threads.x - 1)/BN,
-        (A_num_fil + threads.y - 1)/BM
+        (B_num_col + BN - 1)/BN,
+        (A_num_fil + BM - 1)/BM
     );
 
     for (int i = 0; i < 3; i++)
