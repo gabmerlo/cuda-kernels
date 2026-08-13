@@ -1,19 +1,18 @@
+%%writefile blocktiling-2d.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
 
-//Using B to refer to our tiled blocks
-//BM rows from A, BN columns from B, and K columns and rows in A and B
-constexpr int BM = 16;
-constexpr int BN = 16;
-constexpr int BK = 16;
 
-//These dimensions are for 1 thread (T) and BlockTiling
+constexpr int BM = 64;
+constexpr int BN = 64;
+constexpr int BK = 32;
+
+
 constexpr int TM = 4;
 constexpr int TN = 4;
 
-//How many Blocktiles (1 per thread) we will need to cover all the slots of our Tiled Block
-//Which equates to how many threads, num_threads
+
 constexpr int num_threads = (BM*BN) / (TM*TN);
 
 
@@ -23,9 +22,9 @@ random_device rd;
 mt19937 gen(rd());
 uniform_real_distribution<float> dist(-2.0, 2.0);
 
-__global__ void tiled_matmul_2d(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
+__global__ void blocktiling_2d(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
 
-    
+
 
 }
 
@@ -82,21 +81,21 @@ int main(){
     float *d_B;
     float *d_C;
 
-    cudaMalloc(&d_A, bytes_AB);
-    cudaMalloc(&d_B, bytes_AB);
+    cudaMalloc(&d_A, bytes_A);
+    cudaMalloc(&d_B, bytes_B);
     cudaMalloc(&d_C, bytes_C);
 
-    cudaMemcpy(d_A, h_A, bytes_AB, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B, bytes_AB, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_A, h_A, bytes_A, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B, bytes_B, cudaMemcpyHostToDevice);
 
-    dim3 threads(8,8);
+    dim3 threads(num_threads);
     dim3 blocks(
         (B_num_col + BN - 1)/BN,
         (A_num_fil + BM - 1)/BM
     );
 
     for (int i = 0; i < 3; i++)
-        tiled_matmul_2d<<<blocks,threads>>>(
+        blocktiling_2d<<<blocks,threads>>>(
             A_num_fil, A_num_col, d_A,
             B_num_fil, B_num_col, d_B, d_C
         );
@@ -111,7 +110,7 @@ int main(){
     cudaEventRecord(start);
 
     for (int i = 0; i < 20; i++)
-        tiled_matmul_2d<<<blocks,threads>>>(
+        blocktiling_2d<<<blocks,threads>>>(
             A_num_fil, A_num_col, d_A,
             B_num_fil, B_num_col, d_B, d_C
         );
