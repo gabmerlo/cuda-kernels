@@ -1,4 +1,3 @@
-%%writefile blocktiling-2d.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
@@ -23,6 +22,54 @@ mt19937 gen(rd());
 uniform_real_distribution<float> dist(-2.0, 2.0);
 
 __global__ void blocktiling_2d(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
+
+    __shared__ float shared_memory_1[BM][BK];
+    __shared__ float shared_memory_2[BK][BN];
+
+    float sums[TM*TN] = {0};
+
+    for (int j = 0; j < (A_num_fil * B_num_col)/(BM*BN); j ++){
+
+        //Coordenadas iniciales de nuestro tile mientras va iterando
+        col_ini_bloque = (BN*j) % B_num_col;
+        row_ini_bloque = (BM*BN*j)/(B_num_col);
+
+        for (int k = 0; k < A_num_col / BK; k ++){
+
+            col_ini_a = 
+            row_ini_b = 
+            
+            for (int i = 0; i < (BM*BK / num_threads); i ++){
+
+                col_ini_in_tile_A = (TK*j) % BK
+                row_ini_in_tile_A = (TN)
+
+                //Position inside the dim3 threads adapted to fit A
+                col_pos_a = threadIdx.x + (threadIdx.y%2)*(BK/2);
+                row_pos_a = threadIdx.y/2 + i*8;
+
+                //Position inside A
+                a_pointer = row_ini_bloque*B_num_col + col_ini_bloque + num_threads*i + col_pos_a + row_pos_a*BK;
+
+                shared_memory_1[row_pos_a][col_pos_a] = A[a_pointer];
+
+                //Position inside the dim3 threads adapted to fit B
+                col_pos_b = threadIdx.x + (threadIdx.y%4)*(BN/4);
+                row_pos_b = threadIdx.y/4 + i*4;
+
+                b_pointer = j*BM*BK + num_threads*i + col_pos_b + row_pos_b*BN;
+
+                shared_memory_2[row_pos_b][col_pos_b] = B[b_pointer];
+        }   
+        }
+    }
+    
+
+
+
+
+
+
 
 
 
@@ -88,7 +135,7 @@ int main(){
     cudaMemcpy(d_A, h_A, bytes_A, cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B, bytes_B, cudaMemcpyHostToDevice);
 
-    dim3 threads(num_threads);
+    dim3 threads[16][16];
     dim3 blocks(
         (B_num_col + BN - 1)/BN,
         (A_num_fil + BM - 1)/BM
