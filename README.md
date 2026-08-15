@@ -1,6 +1,6 @@
 # CUDA kernels journey
 
-This README documents my path from my first vector addition to a handwritten 2D  **2774.8 GFLOP/s** (peak) block-tiled matrix multiplication kernel on an NVIDIA T4 (with a 2381.6 GFLOP/s 20 launch average).
+This README documents my path from my first vector addition to a handwritten **2774.8 GFLOP/s** (peak) 2D  block-tiled matrix multiplication kernel on an NVIDIA T4 (with a 2381.6 GFLOP/s 20 launch average).
 
 My code is not perfect, and I am deliberately keeping my mistakes and intermediate kernels because I want to show all my wrong assumptions, indexing problems, and the small hardware aware changes that I made behind every speedup.
 
