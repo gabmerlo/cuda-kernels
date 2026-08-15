@@ -11,6 +11,7 @@ constexpr int BK = 32;
 
 constexpr int TM = 4;
 constexpr int TN = 4;
+constexpr int n_float = 4;
 
 
 constexpr int num_threads = (BM*BN) / (TM*TN);
@@ -41,24 +42,34 @@ __global__ void blocktiling_2d(int A_num_fil, int A_num_col,float *A, int B_num_
         int col_ini_a = k * BK;
         int row_ini_b = k * BK;
 
-        for (int i = 0; i < (BK*BM)/num_threads; i ++){
+        for (int i = 0; i < (BK*BM)/(num_threads*n_float); i ++){
 
             //Position inside the dim3 threads adapted to fit A
-            int col_pos_a = threadIdx.x + (threadIdx.y%2)*(BK/2);
-            int row_pos_a = threadIdx.y/2 + i*8;
+            int col_pos_a = (threadIdx.x%(BK/n_float))*4;
+            int row_pos_a = threadIdx.y*2 + threadIdx.x/8 + i*BM/((BK*BM)/(num_threads*n_float));
 
             //Position inside A
             int a_pointer = row_ini_bloque*A_num_col + col_ini_a + col_pos_a + row_pos_a*A_num_col;
 
-            shared_memory_1[row_pos_a][col_pos_a] = A[a_pointer];
+            float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
+
+            shared_memory_1[row_pos_a][col_pos_a + 0] = f4_a.x;
+            shared_memory_1[row_pos_a][col_pos_a + 1] = f4_a.y;
+            shared_memory_1[row_pos_a][col_pos_a + 2] = f4_a.z;
+            shared_memory_1[row_pos_a][col_pos_a + 3] = f4_a.w;
 
             //Position inside the dim3 threads adapted to fit B
-            int col_pos_b = threadIdx.x + (threadIdx.y%4)*(BN/4);
-            int row_pos_b = threadIdx.y/4 + i*4;
+            int col_pos_b = threadIdx.x*4;
+            int row_pos_b = threadIdx.y + i*16;
 
             int b_pointer = col_ini_bloque + col_pos_b + row_ini_b*B_num_col + row_pos_b*B_num_col ;
 
-            shared_memory_2[row_pos_b][col_pos_b] = B[b_pointer];
+            float4 f4_b = reinterpret_cast<const float4*>(B)[b_pointer / 4];
+
+            shared_memory_2[row_pos_b][col_pos_b + 0] = f4_b.x;
+            shared_memory_2[row_pos_b][col_pos_b + 1] = f4_b.y;
+            shared_memory_2[row_pos_b][col_pos_b + 2] = f4_b.z;
+            shared_memory_2[row_pos_b][col_pos_b + 3] = f4_b.w;
 
     }
     __syncthreads();
