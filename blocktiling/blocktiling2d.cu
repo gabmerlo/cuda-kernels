@@ -1,7 +1,8 @@
 #include <cstdio>
 #include <random>
 #include <chrono>
-
+#include <algorithm>
+#include <cmath>
 
 constexpr int BM = 64;
 constexpr int BN = 64;
@@ -26,61 +27,77 @@ __global__ void blocktiling_2d(int A_num_fil, int A_num_col,float *A, int B_num_
     __shared__ float shared_memory_1[BM][BK];
     __shared__ float shared_memory_2[BK][BN];
 
-    float sums[TM*TN] = {0};
+    float sum[TM][TN] = {0.0f};
+    float regA[TM];
+    float regB[TN];
 
-    for (int j = 0; j < (A_num_fil * B_num_col)/(BM*BN); j ++){
 
-        //Coordenadas iniciales de nuestro tile mientras va iterando
-        col_ini_bloque = (BN*j) % B_num_col;
-        row_ini_bloque = (BM*BN*j)/(B_num_col);
+    //Coordenadas iniciales de nuestro tile mientras va iterando
+    int col_ini_bloque = blockIdx.x * BN;
+    int row_ini_bloque = blockIdx.y * BM;
 
-        for (int k = 0; k < A_num_col / BK; k ++){
+    for (int k = 0; k < A_num_col / BK; k ++){
 
-            col_ini_a = 
-            row_ini_b = 
-            
-            for (int i = 0; i < (BM*BK / num_threads); i ++){
+        int col_ini_a = k * BK;
+        int row_ini_b = k * BK;
 
-                col_ini_in_tile_A = (TK*j) % BK
-                row_ini_in_tile_A = (TN)
+        for (int i = 0; i < (BK*BM)/num_threads; i ++){
 
-                //Position inside the dim3 threads adapted to fit A
-                col_pos_a = threadIdx.x + (threadIdx.y%2)*(BK/2);
-                row_pos_a = threadIdx.y/2 + i*8;
+            //Position inside the dim3 threads adapted to fit A
+            int col_pos_a = threadIdx.x + (threadIdx.y%2)*(BK/2);
+            int row_pos_a = threadIdx.y/2 + i*8;
 
-                //Position inside A
-                a_pointer = row_ini_bloque*B_num_col + col_ini_bloque + num_threads*i + col_pos_a + row_pos_a*BK;
+            //Position inside A
+            int a_pointer = row_ini_bloque*A_num_col + col_ini_a + col_pos_a + row_pos_a*A_num_col;
 
-                shared_memory_1[row_pos_a][col_pos_a] = A[a_pointer];
+            shared_memory_1[row_pos_a][col_pos_a] = A[a_pointer];
 
-                //Position inside the dim3 threads adapted to fit B
-                col_pos_b = threadIdx.x + (threadIdx.y%4)*(BN/4);
-                row_pos_b = threadIdx.y/4 + i*4;
+            //Position inside the dim3 threads adapted to fit B
+            int col_pos_b = threadIdx.x + (threadIdx.y%4)*(BN/4);
+            int row_pos_b = threadIdx.y/4 + i*4;
 
-                b_pointer = j*BM*BK + num_threads*i + col_pos_b + row_pos_b*BN;
+            int b_pointer = col_ini_bloque + col_pos_b + row_ini_b*B_num_col + row_pos_b*B_num_col ;
 
-                shared_memory_2[row_pos_b][col_pos_b] = B[b_pointer];
-        }   
-        }
+            shared_memory_2[row_pos_b][col_pos_b] = B[b_pointer];
+
     }
-    
+    __syncthreads();
 
 
 
+        for (int i = 0; i < BK; i ++){
 
+            for (int j = 0; j < TM; j++){
+                regA[j] = shared_memory_1[(threadIdx.y*4)+j][(i)];
+            }
+            for(int j = 0; j < TN; j++){
+                regB[j] = shared_memory_2[i][(threadIdx.x*4)+j];
+            }
 
+            for(int j = 0; j < TM; j++){
+                for (int t = 0; t < TN; t ++){
+                    sum[j][t] += regA[j]*regB[t];
+                }
+            }
+    }
+    __syncthreads();
+}
 
-
+    //subimos nuestros resultados
+    for (int i = 0; i < TM*TN; i++){
+        int c_address = B_num_col* (row_ini_bloque + threadIdx.y*4 + (i/4)) + col_ini_bloque + i%4 + threadIdx.x*4;
+        C[c_address] = sum[i/4][i%4];
+    }
 
 
 }
 
 int main(){
 
-    int A_num_fil = 256;
-    int A_num_col = 512;
-    int B_num_fil = 512;
-    int B_num_col = 256;
+    int A_num_fil = 2048;
+    int A_num_col = 1024;
+    int B_num_fil = 1024;
+    int B_num_col = 2048;
     int N_A = A_num_fil*A_num_col;
     int N_B = B_num_fil*B_num_col;
     int N_C = A_num_fil*B_num_col;
@@ -124,6 +141,7 @@ int main(){
     double cpu_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     printf("CPU: %.1f ms\n", cpu_ms);
 
+
     float *d_A;
     float *d_B;
     float *d_C;
@@ -135,7 +153,7 @@ int main(){
     cudaMemcpy(d_A, h_A, bytes_A, cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B, bytes_B, cudaMemcpyHostToDevice);
 
-    dim3 threads[16][16];
+    dim3 threads(16,16);
     dim3 blocks(
         (B_num_col + BN - 1)/BN,
         (A_num_fil + BM - 1)/BM
@@ -176,11 +194,34 @@ int main(){
         / 1e9;
 
     printf("GPU: %.3f ms  (%.1f GFLOP/s)\n", gpu_ms, gflops);
-    printf("Speedup: %.1fx\n", cpu_ms / gpu_ms);
 
+    const int N_ITER = 50;
+    float times[N_ITER] = {0.0f};
+    
+    for (int i = 0; i < N_ITER; i++) {
+        cudaEventRecord(start);
+        blocktiling_2d<<<blocks,threads>>>(
+            A_num_fil, A_num_col, d_A,
+            B_num_fil, B_num_col, d_B, d_C
+        );
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&times[i], start, stop);
+    }
+
+    double flops = 2.0 * A_num_fil * B_num_col * A_num_col;
+
+    std::sort(times, times + N_ITER);
+    printf("min:      %.3f ms  (%.1f GFLOP/s)\n",
+       times[0],          flops / (times[0]          / 1000.0) / 1e9);
+    printf("mediana:  %.3f ms  (%.1f GFLOP/s)\n",
+        times[N_ITER/2],   flops / (times[N_ITER/2]   / 1000.0) / 1e9);
+    printf("max:      %.3f ms  (%.1f GFLOP/s)\n",
+        times[N_ITER-1],   flops / (times[N_ITER-1]   / 1000.0) / 1e9);
+    
+    
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
-
 
     cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost);
 
