@@ -7,7 +7,7 @@ __global__ void transposed(int A_fil,int A_col,float *mat1,int B_fil, int B_col,
     int col_pos = blockIdx.x * blockDim.x + threadIdx.x;
     
     if(row_pos < B_fil && col_pos < B_col){
-        result[row_pos*B_col + col_pos] = mat1[row_pos*A_col + row_pos] + mat2[row_pos*B_col + col_pos];
+        result[row_pos*B_col + col_pos] = mat1[col_pos*A_col + row_pos] + mat2[row_pos*B_col + col_pos];
     }
 }
 
