@@ -121,10 +121,10 @@ void report(const char* nombre, float* t, int n, double flops) {
 
 int main(){
 
-    int A_num_fil = 2048;
-    int A_num_col = 1024;
-    int B_num_fil = 1024;
-    int B_num_col = 2048;
+    int A_num_fil = 4096;
+    int A_num_col = 2048;
+    int B_num_fil = 2048;
+    int B_num_col = 4096;
     int N_A = A_num_fil*A_num_col;
     int N_B = B_num_fil*B_num_col;
     int N_C = A_num_fil*B_num_col;
