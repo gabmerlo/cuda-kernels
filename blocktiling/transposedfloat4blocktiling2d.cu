@@ -26,7 +26,7 @@ uniform_real_distribution<float> dist(-2.0, 2.0);
 
 __global__ void blocktiling_2d_float4transposed(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
 
-    __shared__ float shared_memory_1[BK][BM];
+    __shared__ float shared_memory_1[BK][BM+4];
     __shared__ float shared_memory_2[BK][BN];
 
     float sum[TM][TN] = {0.0f};
@@ -53,7 +53,7 @@ __global__ void blocktiling_2d_float4transposed(int A_num_fil, int A_num_col,flo
             int a_pointer = row_ini_bloque*A_num_col + col_ini_a + col_pos_a + row_pos_a*A_num_col;
 
             float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
-
+            
             shared_memory_1[col_pos_a + 0][row_pos_a] = f4_a.x;
             shared_memory_1[col_pos_a + 1][row_pos_a] = f4_a.y;
             shared_memory_1[col_pos_a + 2][row_pos_a] = f4_a.z;
@@ -285,6 +285,17 @@ int main(){
     }
 
     cudaDeviceSynchronize();
+
+    // Verificar la transpuesta
+    blocktiling_2d_float4transposed<<<blocks,threads>>>(
+        A_num_fil, A_num_col, d_A, B_num_fil, B_num_col, d_B, d_C);
+    cudaDeviceSynchronize();
+    cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost);
+
+    double diff_T = 0.0;
+    for (int i = 0; i < N_C; i++)
+        diff_T = std::max(diff_T, fabs((double)h_C[i] - (double)h_C_2[i]));
+    printf("diff transpuesta: %g\n", diff_T);
 
 
     cudaEvent_t start, stop;
