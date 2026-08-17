@@ -83,10 +83,10 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
             for (int j = 0; j < TM; j++){
                 regA[j] = shared_memory_1[(threadIdx.y*TM)+j][(i)];
             }
-            
+
             for (int j = 0; j < TN/n_float; j++){
                 float4 f4_rb = reinterpret_cast<const float4*>(&shared_memory_2[i][threadIdx.x*TN +j*n_float])[0];
-            
+
                 regB[j*n_float] = f4_rb.x;
                 regB[j*n_float + 1] = f4_rb.y;
                 regB[j*n_float + 2] = f4_rb.z;
@@ -103,11 +103,15 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     __syncthreads();
 }
 
-    //subimos nuestros resultados
-    for (int i = 0; i < TM*TN; i++){
+    //subimos nuestros resultados, estoy probando con float4, por lo que he tenido que cambiar cuánto aumenta i
+
+    for (int i = 0; i < TM*TN; i += n_float){
         int c_address = B_num_col* (row_ini_bloque + threadIdx.y*TM + (i/TN)) + col_ini_bloque + i%TN + threadIdx.x*TN;
-        C[c_address] = sum[i/TM][i%TN];
-    }
+
+        float4 results = make_float4(sum[i/TM][i%TN],sum[i/TM][(i%TN) + 1], sum[i/TM][(i%TN) + 2], sum[i/TM][(i%TN) + 3]);
+        reinterpret_cast<float4*>(&C[c_address])[0] = results;
+        
+        }
 
 
 }
@@ -146,6 +150,8 @@ int main(){
         h_B[i] = dist(gen);
     }
 
+    //I usually remove this part if I'm working with 4096, but I reduce dimensions and leave this part if
+    // I'm checking whether my code works or not.
     auto t0 = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < A_num_fil; i++) {
@@ -167,7 +173,6 @@ int main(){
     auto t1 = std::chrono::high_resolution_clock::now();
     double cpu_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     printf("CPU: %.1f ms\n", cpu_ms);
-
 
     float *d_A;
     float *d_B;
@@ -207,7 +212,7 @@ int main(){
     const int N_ITER = 50;
     float times[N_ITER] = {0.0f};
     float times_2[N_ITER] = {0.0f};
-    
+
     for (int i = 0; i < N_ITER; i++) {
         cudaEventRecord(start);
 
@@ -222,8 +227,8 @@ int main(){
 
 
     report("Float4 en registrob", times_2, N_ITER, flops);
-    
-    
+
+
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
