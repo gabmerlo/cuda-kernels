@@ -26,7 +26,7 @@ uniform_real_distribution<float> dist(-2.0, 2.0);
 
 __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
 
-    __shared__ float shared_memory_1[BK][BM];
+    __shared__ float shared_memory_1[BK][BM+4];
     __shared__ float shared_memory_2[BK][BN];
 
     float sum[TM][TN] = {0.0f};
