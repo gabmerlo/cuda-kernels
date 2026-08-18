@@ -3,10 +3,14 @@
 #include <chrono>
 #include <algorithm>
 #include <cmath>
+#include <cublas_v2.h>
+#include <thread>
 
 constexpr int BM = 128;
 constexpr int BN = 128;
 constexpr int BK = 8;
+constexpr float alfa = 1.0f;
+constexpr float beta_gemm = 0.0f;
 
 
 constexpr int TM = 8;
@@ -128,6 +132,8 @@ void report(const char* nombre, float* t, int n, double flops) {
 
 int main(){
 
+
+    cublasHandle_t handle;
     int A_num_fil = 4096;
     int A_num_col = 2048;
     int B_num_fil = 2048;
@@ -144,6 +150,7 @@ int main(){
     float *h_B = (float*)malloc(bytes_B);
     float *h_C = (float*)malloc(bytes_C);
     float *h_C_2 = (float*)malloc(bytes_C);
+    float *h_C_cub = (float*)malloc(bytes_C);
 
     for (int i = 0; i < N_A; i ++){
         h_A[i] = dist(gen);
@@ -158,10 +165,13 @@ int main(){
     float *d_A;
     float *d_B;
     float *d_C;
+    float *d_C_cub;
 
     cudaMalloc(&d_A, bytes_A);
     cudaMalloc(&d_B, bytes_B);
     cudaMalloc(&d_C, bytes_C);
+    cudaMalloc(&d_C_cub, bytes_C);
+    cublasCreate(&handle);
 
     cudaMemcpy(d_A, h_A, bytes_A, cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B, bytes_B, cudaMemcpyHostToDevice);
@@ -173,13 +183,15 @@ int main(){
     );
 
     //Calentamiento
-    for (int i = 0; i < 3; i++){
+    for (int i = 0; i < 10; i++){
 
         blocktiling_2d_float4rb<<<blocks,threads>>>(
             A_num_fil, A_num_col, d_A,
             B_num_fil, B_num_col, d_B, d_C
         );
 
+        cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                B_num_col, A_num_fil, A_num_col, &alfa, d_B, B_num_col, d_A, A_num_col, &beta_gemm, d_C_cub, B_num_col);
 
     }
 
@@ -195,7 +207,13 @@ int main(){
     float times_2[N_ITER] = {0.0f};
 
     for (int i = 0; i < N_ITER; i++) {
+
         cudaEventRecord(start);
+        cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                B_num_col, A_num_fil, A_num_col, &alfa, d_B, B_num_col, d_A, A_num_col, &beta_gemm, d_C_cub, B_num_col);
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&times[i], start, stop);
 
         cudaEventRecord(start);
         blocktiling_2d_float4rb<<<blocks,threads>>>(A_num_fil, A_num_col, d_A, B_num_fil, B_num_col, d_B, d_C);
@@ -207,19 +225,20 @@ int main(){
     double flops = 2.0 * A_num_fil * B_num_col * A_num_col;
 
 
-    report("Float4 en registrob", times_2, N_ITER, flops);
-
+    report("Sin cublass", times_2, N_ITER, flops);
+    report("Con cublass", times, N_ITER, flops);
 
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
     cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_C_cub, d_C_cub, bytes_C, cudaMemcpyDeviceToHost);
 
     //New bench, to help me not miss anything
     double max_diff = 0.0;
     int bad_index = -1;
     for (int i = 0; i < N_C; i++) {
-        double d = fabs((double)h_C[i] - (double)h_C_2[i]);
+        double d = fabs((double)h_C[i] - (double)h_C_cub[i]);
         if (d > max_diff) { max_diff = d; bad_index = i; }
     }
     printf("Max abs diff: %g  (at index %d)\n", max_diff, bad_index);
@@ -227,6 +246,7 @@ int main(){
     cudaFree(d_A);
     cudaFree(d_B);
     cudaFree(d_C);
+    cublasDestroy(handle);
 
     for(int i = 0; i < 5; i ++){
         printf("%f\n",h_C[i]);
