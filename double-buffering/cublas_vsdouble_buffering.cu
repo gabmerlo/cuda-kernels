@@ -1,3 +1,4 @@
+%%writefile doublebufferingcublass.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
@@ -273,6 +274,10 @@ int main(){
         cudaEventSynchronize(stop);
         cudaEventElapsedTime(&times_2[i], start, stop);
 
+    }
+
+
+for (int i = 0; i < N_ITER; i++) {
 
         cudaEventRecord(start);        
         cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,                
@@ -280,7 +285,9 @@ int main(){
         cudaEventRecord(stop);        
         cudaEventSynchronize(stop);        
         cudaEventElapsedTime(&times[i], start, stop);
+
     }
+
 
     double flops = 2.0 * A_num_fil * B_num_col * A_num_col;
 
@@ -307,7 +314,7 @@ int main(){
     cudaFree(d_B);
     cudaFree(d_C);
     cublasDestroy(handle);
-    
+
     for(int i = 0; i < 5; i ++){
         printf("%f\n",h_C[i]);
     }
