@@ -46,7 +46,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     int row_pos_a = threadIdx.y*8 + threadIdx.x/2;
 
     //Position inside A, +1 for the double buffering
-    int a_pointer = row_ini_bloque*A_num_col + col_pos_a + row_pos_a*A_num_col + 1;
+    int a_pointer = row_ini_bloque*A_num_col + col_pos_a + row_pos_a*A_num_col;
 
     float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
 
