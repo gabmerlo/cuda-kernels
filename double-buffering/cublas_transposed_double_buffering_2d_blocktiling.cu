@@ -1,10 +1,10 @@
-%%writefile doublebufferingcublass.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <cublas_v2.h>
+#include <thread>
 
 constexpr int BM = 128;
 constexpr int BN = 128;
@@ -12,13 +12,10 @@ constexpr int BK = 8;
 constexpr float alfa = 1.0f;
 constexpr float beta_gemm = 0.0f;
 
+
 constexpr int TM = 8;
 constexpr int TN = 8;
 constexpr int n_float = 4;
-
-
-constexpr int num_threads = (BM*BN) / (TM*TN);
-
 
 using namespace std;
 
@@ -29,16 +26,14 @@ uniform_real_distribution<float> dist(-2.0, 2.0);
 
 __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
 
-
     int actual = 0;
-    __shared__ float shared_memory_1[2][BM][BK];
+    __shared__ float shared_memory_1[2][BK][BM+4];
     __shared__ float shared_memory_2[2][BK][BN];
 
     float sum[TM][TN] = {0.0f};
-    float regA[TM];
-    float regB[TN];
+    float registerA[TM];
+    float registerB[TN];
 
-    //Primera fase
 
     //Coordenadas iniciales de nuestro tile mientras va iterando
     int col_ini_bloque = blockIdx.x * BN;
@@ -48,15 +43,15 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     int col_pos_a = (threadIdx.x%(BK/n_float))*n_float;
     int row_pos_a = threadIdx.y*8 + threadIdx.x/2;
 
-    //Position inside A, +1 for the double buffering
+    //Position inside A
     int a_pointer = row_ini_bloque*A_num_col + col_pos_a + row_pos_a*A_num_col;
 
     float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
 
-    shared_memory_1[actual][row_pos_a][col_pos_a + 0] = f4_a.x;
-    shared_memory_1[actual][row_pos_a][col_pos_a + 1] = f4_a.y;
-    shared_memory_1[actual][row_pos_a][col_pos_a + 2] = f4_a.z;
-    shared_memory_1[actual][row_pos_a][col_pos_a + 3] = f4_a.w;
+    shared_memory_1[actual][col_pos_a + 0][row_pos_a] = f4_a.x;
+    shared_memory_1[actual][col_pos_a + 1][row_pos_a] = f4_a.y;
+    shared_memory_1[actual][col_pos_a + 2][row_pos_a] = f4_a.z;
+    shared_memory_1[actual][col_pos_a + 3][row_pos_a] = f4_a.w;
 
     //Position inside the dim3 threads adapted to fit B
     int col_pos_b = threadIdx.x*4 + (threadIdx.y%2)*64;
@@ -75,7 +70,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
     __syncthreads();
 
-    for (int k = 1; k < (A_num_col / BK); k ++){
+    for (int k = 1; k < A_num_col / BK; k ++){
 
         int col_ini_a = k * BK;
         int row_ini_b = k * BK;
@@ -84,12 +79,11 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
         int col_pos_a = (threadIdx.x%(BK/n_float))*n_float;
         int row_pos_a = threadIdx.y*8 + threadIdx.x/2;
 
-        //Position inside A, +1 for the double buffering
-        int a_pointer = row_ini_bloque*A_num_col + col_ini_a + col_pos_a + row_pos_a*A_num_col + 1;
+        //Position inside A
+        int a_pointer = row_ini_bloque*A_num_col + col_ini_a + col_pos_a + row_pos_a*A_num_col;
 
         float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
 
-        
         //Position inside the dim3 threads adapted to fit B
         int col_pos_b = threadIdx.x*4 + (threadIdx.y%2)*64;
         int row_pos_b = threadIdx.y/2;
@@ -98,36 +92,37 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
         float4 f4_b = reinterpret_cast<const float4*>(B)[b_pointer / 4];
 
-
-
         for (int i = 0; i < BK; i ++){
 
-            for (int j = 0; j < TM; j++){
-                regA[j] = shared_memory_1[1 - actual][(threadIdx.y*TM)+j][(i)];
+            for (int s = 0; s < TN/n_float; s++){
+                float4 f4_registera = reinterpret_cast<const float4*>(&shared_memory_1[1-actual][i][threadIdx.y*TN + s*n_float])[0];
+                registerA[s*n_float + 0] = f4_registera.x;
+                registerA[s*n_float + 1] = f4_registera.y;
+                registerA[s*n_float + 2] = f4_registera.z;
+                registerA[s*n_float + 3] = f4_registera.w;
             }
 
             for (int j = 0; j < TN/n_float; j++){
-                float4 f4_rb = reinterpret_cast<const float4*>(&shared_memory_2[1 - actual][i][threadIdx.x*TN +j*n_float])[0];
+                float4 f4_rb = reinterpret_cast<const float4*>(&shared_memory_2[1-actual][i][threadIdx.x*TN +j*n_float])[0];
 
-                regB[j*n_float] = f4_rb.x;
-                regB[j*n_float + 1] = f4_rb.y;
-                regB[j*n_float + 2] = f4_rb.z;
-                regB[j*n_float + 3] = f4_rb.w;
+                registerB[j*n_float] = f4_rb.x;
+                registerB[j*n_float + 1] = f4_rb.y;
+                registerB[j*n_float + 2] = f4_rb.z;
+                registerB[j*n_float + 3] = f4_rb.w;
 
             }
 
             for(int j = 0; j < TM; j++){
                 for (int t = 0; t < TN; t ++){
-                    sum[j][t] += regA[j]*regB[t];
+                    sum[j][t] += registerA[j]*registerB[t];
                 }
             }
     }
-        
-        shared_memory_1[actual][row_pos_a][col_pos_a + 0] = f4_a.x;
-        shared_memory_1[actual][row_pos_a][col_pos_a + 1] = f4_a.y;
-        shared_memory_1[actual][row_pos_a][col_pos_a + 2] = f4_a.z;
-        shared_memory_1[actual][row_pos_a][col_pos_a + 3] = f4_a.w;
 
+        shared_memory_1[actual][col_pos_a + 0][row_pos_a] = f4_a.x;
+        shared_memory_1[actual][col_pos_a + 1][row_pos_a] = f4_a.y;
+        shared_memory_1[actual][col_pos_a + 2][row_pos_a] = f4_a.z;
+        shared_memory_1[actual][col_pos_a + 3][row_pos_a] = f4_a.w;
 
         shared_memory_2[actual][row_pos_b][col_pos_b + 0] = f4_b.x;
         shared_memory_2[actual][row_pos_b][col_pos_b + 1] = f4_b.y;
@@ -136,37 +131,41 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
         actual = 1 - actual;
 
-    
-    __syncthreads();
+        __syncthreads();
 
 
-}
-    //Operando el último tile
+    }
 
     for (int i = 0; i < BK; i ++){
 
-            for (int j = 0; j < TM; j++){
-                regA[j] = shared_memory_1[1 - actual][(threadIdx.y*TM)+j][(i)];
+            for (int s = 0; s < TN/n_float; s++){
+                float4 f4_registera = reinterpret_cast<const float4*>(&shared_memory_1[1-actual][i][threadIdx.y*TN + s*n_float])[0];
+                registerA[s*n_float + 0] = f4_registera.x;
+                registerA[s*n_float + 1] = f4_registera.y;
+                registerA[s*n_float + 2] = f4_registera.z;
+                registerA[s*n_float + 3] = f4_registera.w;
             }
 
             for (int j = 0; j < TN/n_float; j++){
-                float4 f4_rb = reinterpret_cast<const float4*>(&shared_memory_2[1 - actual][i][threadIdx.x*TN +j*n_float])[0];
+                float4 f4_rb = reinterpret_cast<const float4*>(&shared_memory_2[1-actual][i][threadIdx.x*TN +j*n_float])[0];
 
-                regB[j*n_float] = f4_rb.x;
-                regB[j*n_float + 1] = f4_rb.y;
-                regB[j*n_float + 2] = f4_rb.z;
-                regB[j*n_float + 3] = f4_rb.w;
+                registerB[j*n_float] = f4_rb.x;
+                registerB[j*n_float + 1] = f4_rb.y;
+                registerB[j*n_float + 2] = f4_rb.z;
+                registerB[j*n_float + 3] = f4_rb.w;
 
             }
 
             for(int j = 0; j < TM; j++){
                 for (int t = 0; t < TN; t ++){
-                    sum[j][t] += regA[j]*regB[t];
+                    sum[j][t] += registerA[j]*registerB[t];
                 }
             }
     }
 
     __syncthreads();
+
+    
 
     //subimos nuestros resultados, estoy probando con float4, por lo que he tenido que cambiar cuánto aumenta i
 
@@ -175,7 +174,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
         float4 results = make_float4(sum[i/TM][i%TN],sum[i/TM][(i%TN) + 1], sum[i/TM][(i%TN) + 2], sum[i/TM][(i%TN) + 3]);
         reinterpret_cast<float4*>(&C[c_address])[0] = results;
-
+        
         }
 
 
@@ -189,6 +188,7 @@ void report(const char* nombre, float* t, int n, double flops) {
     }
 
 int main(){
+
 
     cublasHandle_t handle;
     int A_num_fil = 4096;
@@ -216,11 +216,9 @@ int main(){
     for (int i = 0; i < N_B; i ++){
         h_B[i] = dist(gen);
     }
+
     
 
-    //I usually remove this part if I'm working with 4096, but I reduce dimensions and leave this part if
-    // I'm checking whether my code works or not.
-    
     float *d_A;
     float *d_B;
     float *d_C;
@@ -229,7 +227,7 @@ int main(){
     cudaMalloc(&d_A, bytes_A);
     cudaMalloc(&d_B, bytes_B);
     cudaMalloc(&d_C, bytes_C);
-    cudaMalloc(&d_C_cub, bytes_C);    
+    cudaMalloc(&d_C_cub, bytes_C);
     cublasCreate(&handle);
 
     cudaMemcpy(d_A, h_A, bytes_A, cudaMemcpyHostToDevice);
@@ -242,16 +240,15 @@ int main(){
     );
 
     //Calentamiento
-    for (int i = 0; i < 3; i++){
+    for (int i = 0; i < 10; i++){
 
         blocktiling_2d_float4rb<<<blocks,threads>>>(
             A_num_fil, A_num_col, d_A,
             B_num_fil, B_num_col, d_B, d_C
         );
 
-        cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,                
-        B_num_col, A_num_fil, A_num_col, &alfa, d_B, B_num_col, d_A, A_num_col, &beta_gemm, d_C_cub, B_num_col);
-
+        cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                B_num_col, A_num_fil, A_num_col, &alfa, d_B, B_num_col, d_A, A_num_col, &beta_gemm, d_C_cub, B_num_col);
 
     }
 
@@ -273,26 +270,22 @@ int main(){
         cudaEventRecord(stop);
         cudaEventSynchronize(stop);
         cudaEventElapsedTime(&times_2[i], start, stop);
-
     }
 
+    for (int i = 0; i < N_ITER; i++) {
 
-for (int i = 0; i < N_ITER; i++) {
-
-        cudaEventRecord(start);        
-        cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,                
-        B_num_col, A_num_fil, A_num_col, &alfa, d_B, B_num_col, d_A, A_num_col, &beta_gemm, d_C_cub, B_num_col);        
-        cudaEventRecord(stop);        
-        cudaEventSynchronize(stop);        
+        cudaEventRecord(start);
+        cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                B_num_col, A_num_fil, A_num_col, &alfa, d_B, B_num_col, d_A, A_num_col, &beta_gemm, d_C_cub, B_num_col);
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
         cudaEventElapsedTime(&times[i], start, stop);
-
     }
-
 
     double flops = 2.0 * A_num_fil * B_num_col * A_num_col;
 
 
-    report("Sin cublass", times_2, N_ITER, flops);    
+    report("Sin cublass", times_2, N_ITER, flops);
     report("Con cublass", times, N_ITER, flops);
 
     cudaEventDestroy(start);
