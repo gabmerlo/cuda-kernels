@@ -103,20 +103,19 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
             }
 
             for (int j = 0; j < TN/n_float; j++){
-                float4 f4_rb = reinterpret_cast<const float4*>(&shared_memory_2[1-actual][i][threadIdx.x*TN +j*n_float])[0];
-
+                float4 f4_rb = reinterpret_cast<const float4*>(&shared_memory_2[1-actual][i][threadIdx.x*n_float + j*(BN-(blockDim.x*n_float))])[0];
                 registerB[j*n_float] = f4_rb.x;
                 registerB[j*n_float + 1] = f4_rb.y;
                 registerB[j*n_float + 2] = f4_rb.z;
                 registerB[j*n_float + 3] = f4_rb.w;
-
             }
-
+            
             for(int j = 0; j < TM; j++){
                 for (int t = 0; t < TN; t ++){
                     sum[j][t] += registerA[j]*registerB[t];
                 }
             }
+
     }
 
         shared_memory_1[actual][col_pos_a + 0][row_pos_a] = f4_a.x;
@@ -133,7 +132,6 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
         __syncthreads();
 
-
     }
 
     for (int i = 0; i < BK; i ++){
@@ -147,7 +145,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
             }
 
             for (int j = 0; j < TN/n_float; j++){
-                float4 f4_rb = reinterpret_cast<const float4*>(&shared_memory_2[1-actual][i][threadIdx.x*TN +j*n_float])[0];
+                float4 f4_rb = reinterpret_cast<const float4*>(&shared_memory_2[1-actual][i][threadIdx.x*n_float + j*(BN-(blockDim.x*n_float))])[0];
 
                 registerB[j*n_float] = f4_rb.x;
                 registerB[j*n_float + 1] = f4_rb.y;
@@ -158,7 +156,9 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
             for(int j = 0; j < TM; j++){
                 for (int t = 0; t < TN; t ++){
+
                     sum[j][t] += registerA[j]*registerB[t];
+
                 }
             }
     }
@@ -170,11 +170,12 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     //subimos nuestros resultados, estoy probando con float4, por lo que he tenido que cambiar cuánto aumenta i
 
     for (int i = 0; i < TM*TN; i += n_float){
+
         int c_address = B_num_col* (row_ini_bloque + threadIdx.y*TM + (i/TN)) + col_ini_bloque + i%TN + threadIdx.x*TN;
 
         float4 results = make_float4(sum[i/TM][i%TN],sum[i/TM][(i%TN) + 1], sum[i/TM][(i%TN) + 2], sum[i/TM][(i%TN) + 3]);
         reinterpret_cast<float4*>(&C[c_address])[0] = results;
-        
+
         }
 
 
