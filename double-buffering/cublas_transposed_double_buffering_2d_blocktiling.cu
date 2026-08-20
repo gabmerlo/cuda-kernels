@@ -1,3 +1,4 @@
+%%writefile cublas-transposed-blocktiling.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
@@ -171,7 +172,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
     for (int i = 0; i < TM*TN; i += n_float){
 
-        int c_address = B_num_col* (row_ini_bloque + threadIdx.y*TM + (i/TN)) + col_ini_bloque + i%TN + threadIdx.x*TN;
+        int c_address = B_num_col* (row_ini_bloque + threadIdx.y*TM + (i/TN)) + col_ini_bloque + i%n_float + threadIdx.x*n_float + ((i%TN)/n_float)*(BN-(blockDim.x*n_float)) ;
 
         float4 results = make_float4(sum[i/TM][i%TN],sum[i/TM][(i%TN) + 1], sum[i/TM][(i%TN) + 2], sum[i/TM][(i%TN) + 3]);
         reinterpret_cast<float4*>(&C[c_address])[0] = results;
