@@ -1,4 +1,3 @@
-%%writefile cublas-transposed-blocktiling.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
@@ -266,23 +265,19 @@ int main(){
     float times_2[N_ITER] = {0.0f};
 
     for (int i = 0; i < N_ITER; i++) {
+    cudaEventRecord(start);
+    blocktiling_2d_float4rb<<<blocks,threads>>>(A_num_fil, A_num_col, d_A, B_num_fil, B_num_col, d_B, d_C);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&times_2[i], start, stop);
 
-        cudaEventRecord(start);
-        blocktiling_2d_float4rb<<<blocks,threads>>>(A_num_fil, A_num_col, d_A, B_num_fil, B_num_col, d_B, d_C);
-        cudaEventRecord(stop);
-        cudaEventSynchronize(stop);
-        cudaEventElapsedTime(&times_2[i], start, stop);
-    }
-
-    for (int i = 0; i < N_ITER; i++) {
-
-        cudaEventRecord(start);
-        cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                B_num_col, A_num_fil, A_num_col, &alfa, d_B, B_num_col, d_A, A_num_col, &beta_gemm, d_C_cub, B_num_col);
-        cudaEventRecord(stop);
-        cudaEventSynchronize(stop);
-        cudaEventElapsedTime(&times[i], start, stop);
-    }
+    cudaEventRecord(start);
+    cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+            B_num_col, A_num_fil, A_num_col, &alfa, d_B, B_num_col, d_A, A_num_col, &beta_gemm, d_C_cub, B_num_col);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&times[i], start, stop);
+}
 
     double flops = 2.0 * A_num_fil * B_num_col * A_num_col;
 
