@@ -24,7 +24,7 @@ mt19937 gen(rd());
 uniform_real_distribution<float> dist(-2.0, 2.0);
 
 
-__global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
+__global__ void __launch_bounds__(256, 2) blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
 
     int actual = 0;
     __shared__ float shared_memory_1[2][BK][BM+4];
@@ -109,7 +109,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
                 registerB[j*n_float + 2] = f4_rb.z;
                 registerB[j*n_float + 3] = f4_rb.w;
             }
-            
+
             for(int j = 0; j < TM; j++){
                 for (int t = 0; t < TN; t ++){
                     sum[j][t] += registerA[j]*registerB[t];
@@ -165,7 +165,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
     __syncthreads();
 
-    
+
 
     //subimos nuestros resultados, estoy probando con float4, por lo que he tenido que cambiar cuánto aumenta i
 
@@ -207,7 +207,6 @@ int main(){
     float *h_A = (float*)malloc(bytes_A);
     float *h_B = (float*)malloc(bytes_B);
     float *h_C = (float*)malloc(bytes_C);
-    float *h_C_2 = (float*)malloc(bytes_C);
     float *h_C_cub = (float*)malloc(bytes_C);
 
     for (int i = 0; i < N_A; i ++){
@@ -218,7 +217,7 @@ int main(){
         h_B[i] = dist(gen);
     }
 
-    
+
 
     float *d_A;
     float *d_B;
