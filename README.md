@@ -1,8 +1,8 @@
 # CUDA kernels journey
 
-This README documents my path from my first vector addition to a handwritten **2774.8 GFLOP/s** (peak) 2D block-tiled matrix multiplication kernel on an NVIDIA T4, with a **2381.6 GFLOP/s average over 20 launches**.
+This README documents my path from my first vector addition to a handwritten double-buffered matrix multiplication kernel reaching **3946 GFLOP/s median** and **4257 GFLOP/s on its best launch** on an NVIDIA T4, in the same benchmark cuBLAS reached a 4630 GFLOP/s median.
 
-My code is not perfect and I am deliberately keeping my mistakes and intermediate kernels because I want to show the wrong assumptions, indexing problems and the small changes behind the speedups, the peak is only the best launch I saw and not the result I get every time which is why I also include the average and median.
+My code is not perfect and I am deliberately keeping my mistakes and intermediate kernels because I want to show the wrong assumptions, indexing problems and the changes behind the speedups, some results also use different matrix sizes or an older timing loop so I try to mention that instead of presenting every number as a controlled comparison.
 
 ## Complete performance journey so far
 
@@ -14,8 +14,16 @@ My code is not perfect and I am deliberately keeping my mistakes and intermediat
 | Coalesced B loads | Changed how B arrives from global memory | 654.1 |
 | 2D 16x16 tiled | Moved to 2D blocks and shared memory | 639.9 |
 | 1D blocktiling | Four results per thread | around 400 |
-| 2D blocktiling | Average over 20 launches | 2381.6 |
-| 2D blocktiling | Best individual launch | **2774.8** |
+| 2D blocktiling 4x4 | Average over 20 launches | 2381.6 |
+| 4x4 with `float4` loads | Vectorized global loads, median | 2981.6 |
+| First 8x8 thread tile | More work per thread but initially slower | 2575 |
+| `float4` C stores | Vectorized output stores, median | 3750 |
+| Double buffering | Two alternating shared-memory tiles | 3884 |
+| Remapped shared B reads | Bank-conflict fix, older timing loop | 4262* |
+| Final separated benchmark | My kernel, median | **3946** |
+| cuBLAS reference | Same final benchmark, median | **4630** |
+
+`4262` came from the previous comparison loop and I still need to run that exact optimized variant with the final separated benchmark, so I do not use it as the headline result yet.
 
 ![My CUDA matmul performance journey so far](assets/full-performance-journey.svg)
 
@@ -38,7 +46,7 @@ I later made a small [2D indexing exercise](2d-transposed/2d-transposed.cu), the
 
 My first [blocktiling attempt](blocktiling/blocktiling1d.cu) made each thread calculate four outputs in one direction, this was where I first tried to do more work per thread but the mapping is honestly overcomplicated and I had trouble following variables like `threadIdx_r4_1` and `threadIdxy4_1` while debugging it, when it finally worked it was also slower at around **400 GFLOP/s** which showed me that giving a thread more outputs was not automatically an optimization, after this file I started paying more attention to names, comments and removing dead code because I did not want the next kernel to become just as difficult for me to read.
 
-## Current kernel
+## First 2D blocktiling kernel
 
 In [`blocktiling2d.cu`](blocktiling/blocktiling2d.cu) every thread calculates a 4x4 section of C and keeps the results and the values being reused in these arrays:
 
@@ -48,39 +56,76 @@ float regA[TM];
 float regB[TN];
 ```
 
-Inside the compute loop those values form the small outer product with:
+For every position in K a thread brings four values from A and four from B into those arrays and uses them to update 16 results, so the values read from shared memory do more work before the next ones are loaded, this reuse was the main difference from my previous version where a thread only owned results in one direction.
 
-```cpp
-sum[j][t] += regA[j]*regB[t];
-```
-
-For every position in K a thread brings four values from A and four from B into those arrays and uses them to update 16 results, so the values read from shared memory do more work before the next ones are loaded, this reuse is the main difference from my previous version where a thread only owned results in one direction.
-
-For the tile sizes I was comparing a smaller 32x32 block tile with the 64x64 one that is now in the file, both could work but the smaller version only needed 64 threads while the current one uses 256 and also reuses the loaded tiles more, I kept K in chunks of 32 and made each thread own 4x4 results because it looked like a reasonable balance before knowing the real register count, the `BM`, `BN`, `BK`, `TM` and `TN` names were also part of trying to make this version easier to understand than my previous blocktiling code.
-
-I was thinking about registers, shared memory and having enough threads when I chose the dimensions but most of it was still an estimate while writing the code, once it compiled I checked what the compiler had actually done and `ptxas` reported this:
+For the tile sizes I was comparing a smaller 32x32 block tile with the 64x64 one in the file, both could work but the smaller version only needed 64 threads while the 64x64 version uses 256 and also reuses the loaded tiles more, I kept K in chunks of 32 and made each thread own 4x4 results because it looked like a reasonable balance before knowing the real register count.
 
 ```text
 0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
 Used 64 registers, used 1 barriers, 16384 bytes smem
 ```
 
-It used more registers than I expected but nothing spilled to local memory, with the block size in the file this still fits four resident blocks on the T4 although it lands just at the register limit, so this was useful because the estimate from only counting the arrays did not include everything else the compiler needed.
+The real result from `ptxas` was more registers than I expected but nothing spilled to local memory, this kernel reached a **2381.6 GFLOP/s average** and a best launch of 2774.8 GFLOP/s on `2048x1024 * 1024x2048`.
 
-The first commit of this kernel was barely a sketch with missing types, wrong global addresses and even `dim3 threads[16][16]` instead of `dim3 threads(16,16)`, I also made every block repeat work that the grid was already doing and the following commits are where I slowly removed those mistakes until the complete output matched the CPU.
+## From 4x4 blocktiling to the current kernels
 
-This is the output I recorded for `2048x1024 * 1024x2048`:
+The next thing I tried was using `float4` for the global loads in [`float4blocktiling2d.cu`](blocktiling/float4blocktiling2d.cu), instead of moving one float with each expression I adapted the indexes so the aligned loads bring four values:
+
+```cpp
+float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
+float4 f4_b = reinterpret_cast<const float4*>(B)[b_pointer / 4];
+```
+
+That moved the median from around **2382 to 2982 GFLOP/s**, I also tried using `float4` when moving B from shared memory into registers but both versions performed almost the same, so it looked like the compiler may already have been doing that part for me.
+
+After the 4x4 version I adapted it into an [8x8 thread tile](blocktiling/8x8blocktiling2d.cu) with a 128x128 block tile, the idea was to perform more FFMA for the values loaded but the first result was actually slower at around **2575 GFLOP/s**, then I increased the multiplication to `4096x2048 * 2048x4096` because I suspected the earlier benchmark was not giving this kernel enough work, the time and GFLOP/s copied into that specific commit message do not agree with each other so the graph uses the next consistent large-matrix run at **3750 GFLOP/s** instead.
+
+I also tried transposing A inside shared memory so that its register loads could use `float4`, the first 4x4 transposed version dropped from around 3007 to 2426 GFLOP/s and Nsight Compute showed many more conflicts when writing the transposed shared tile, padding helped some later 8x8 versions but this was another case where an optimization that looked reasonable in the code did not automatically help once measured.
+
+On the padded 8x8 version some of the stall values I recorded with `ncu` were:
 
 ```text
-GPU:      3.607 ms  (2381.6 GFLOP/s, 20-launch average)
-min:      3.096 ms  (2774.8 GFLOP/s)
-mediana:  3.612 ms  (2378.3 GFLOP/s)
-max:      3.617 ms  (2375.0 GFLOP/s)
-Max abs diff: 0.000106812 (at index 3831606)
+barrier:         1.04
+long scoreboard: 0.97
+MIO throttle:    2.48
 ```
+
+The kernel looked more balanced than my older 4x4 version, so the next experiment was [double buffering](double-buffering/double-buffering_2d_blocktiling.cu), I added two copies of each shared tile and alternate between them so the loads for the next K tile can be issued before finishing the compute for the current one:
+
+```cpp
+__shared__ float shared_memory_1[2][BM][BK];
+__shared__ float shared_memory_2[2][BK][BN];
+
+actual = 1 - actual;
+```
+
+This reached around **3884 GFLOP/s median**, only a moderate improvement which was not too surprising after seeing the low long-scoreboard value, I also initially skipped one K tile with the loop limit and the maximum difference immediately jumped to around 17 which helped me find that mistake.
+
+The latest transposed double-buffering work came from noticing that the 8 values each thread read from shared B left gaps between neighbouring threads and created bank conflicts, I changed the ownership so threads first cover one contiguous half of the 128 columns and then the other:
+
+```cpp
+threadIdx.x*n_float + j*(BN-(blockDim.x*n_float))
+```
+
+That also meant the C output index had to follow the new ownership, the first version calculated correctly inside the kernel but wrote the results into the old positions and fixing that one expression was less straightforward than I expected, after the complete change this variant recorded **4262 GFLOP/s median** with the older timing loop.
+
+## Current comparison with cuBLAS
+
+I first measured my kernel and cuBLAS inside the same loop and the results moved more than I expected, in the latest comparison I put all launches of my kernel in one loop and all cuBLAS launches in another so they do not alternate and affect each measurement in the same way:
+
+```text
+My kernel  min 16.144 ms (4257 GFLOP/s)  mediana 17.416 ms (3946 GFLOP/s)
+cuBLAS     min 14.131 ms (4863 GFLOP/s)  mediana 14.842 ms (4630 GFLOP/s)
+```
+
+Using the medians my kernel reaches about **85.2% of cuBLAS**, while comparing the two best launches gives about 87.5%, I prefer the median as the main number because it represents the complete set of launches better and the result has been consistent across the runs I made in Google Colab.
+
+The final separated comparison currently uses the non-transposed double-buffering file while the 4262 GFLOP/s bank-conflict fix is in the transposed variant, so my next benchmark step is applying the final measurement loop to that exact variant before treating 4262 as the new repeatable result.
 
 ## Benchmark notes
 
-The numbers were recorded in Google Colab on an NVIDIA T4 and only measure the kernel, older kernels used a different matrix shape so the last bar is not a completely controlled comparison, and the current kernel only handles the aligned dimensions used here and has not been compared with cuBLAS yet.
+All these numbers are kernel-only measurements recorded on an NVIDIA T4 in Google Colab, the latest runs reported 1590 MHz and a 70 W power limit, the early kernels and the first 4x4 blocktiling used smaller matrices while the newer 8x8 and double-buffering kernels use `4096x2048 * 2048x4096`, so the graph marks where that benchmark shape changed.
 
-I used model help for parts of the benchmark code and for organizing parts of this README, the kernels and their indexing/debugging are my work, and the commit history has much more detail including the versions where the kernels were wrong.
+The kernels are still written for the aligned dimensions used in their tests and do not handle arbitrary leftover M, N or K tiles yet, the result checks compare the complete output against a CPU reference or cuBLAS but there is still benchmark variance and the commit history contains the exact results and failed versions behind this summary.
+
+I used model help for parts of the benchmark code and for organizing parts of this README, the kernels and their indexing/debugging are my work.
