@@ -1,31 +1,36 @@
 # CUDA kernels journey
 
-This README documents my path from my first vector addition to a handwritten double-buffered matrix multiplication kernel reaching **3946 GFLOP/s median** and **4257 GFLOP/s on its best launch** on an NVIDIA T4, in the same benchmark cuBLAS reached a 4630 GFLOP/s median.
+In this repository, you can see my progress from my very first matmul, which achieved **355.9 GFLOP/s** (**5% of cuBLAS performance**), to my latest SGEMM kernel, which reaches **4317 GFLOP/s**, **92.9% of cuBLAS**, on an NVIDIA Tesla T4 running at 70.00 W and 1590 MHz.
 
-My code is not perfect and I am deliberately keeping my mistakes and intermediate kernels because I want to show the wrong assumptions, indexing problems and the changes behind the speedups, some results also use different matrix sizes or an older timing loop so I try to mention that instead of presenting every number as a controlled comparison.
+cuBLAS is NVIDIA's own optimized library for matrix multiplication, so I use it to see how close my kernels get to NVIDIA's own implementation on the same operation as me.
 
-## Complete performance journey so far
+But my SGEMM kernel with `alpha = 1` and `beta = 0` on A `4096x2048` and `2048x4096` is not intended to be my best kernel, as my only objective with this repository is to learn, so what's most likely is that I will be adding more kernels in the future.
 
-| Kernel iteration | What changed | Recorded GFLOP/s |
+For that reason, the code I show here is not perfect, you can see this both in the current code, which I am still trying to improve, and especially throughout my commit history, where I gradually improved my matmul **from 5% of cuBLAS to 92.9% of cuBLAS**, correcting many, many, mistakes, as I learned new concepts and implemented stuff by hand.
+
+One disclaimer that I want to make is that my measurements may not always be perfect, since until now I have worked mostly in Google Colab, and I have also changed both the matrix sizes and the benchmarking loops over time, however, I have tried to document all of those changes as thoroughly as possible along the way.
+
+## My SGEMM performance over time
+
+| Kernel iteration | Changes | The GFLOP/s |
 |---|---|---:|
-| Naïve matmul | One thread calculates one result | 355.9 |
-| 1D 32x32 tiled | First correct shared-memory tiles | 195.1 |
-| Padded 1D tiles | Removed shared-memory bank conflicts | 470.0 |
-| Coalesced B loads | Changed how B arrives from global memory | 654.1 |
-| 2D 16x16 tiled | Moved to 2D blocks and shared memory | 639.9 |
-| 1D blocktiling | Four results per thread | around 400 |
-| 2D blocktiling 4x4 | Average over 20 launches | 2381.6 |
-| 4x4 with `float4` loads | Vectorized global loads, median | 2981.6 |
-| First 8x8 thread tile | More work per thread but initially slower | 2575 |
-| `float4` C stores | Vectorized output stores, median | 3750 |
-| Double buffering | Two alternating shared-memory tiles | 3884 |
-| Remapped shared B reads | Bank-conflict fix, older timing loop | 4262* |
-| Final separated benchmark | My kernel, median | **3946** |
-| cuBLAS reference | Same final benchmark, median | **4630** |
+| Naïve matmul | Each thread calculated just one result | 355.9 GFLOP/s |
+| 1D 32x32 tiled | My first ever correct shared-memory tiles | 195.1 GFLOP/s (very disappointing) |
+| 1D 32x32 tiled (Padded) | I padded the shared memory to reduce bank conflicts | 470.0 GFLOP/s (progress) |
+| 1D 32x32 tiled (B Coalesced) | Changed how B arrives from global memory | 654.1 GFLOP/s (more progress) |
+| 2D 16x16 tiled | Moved to 2D blocks and shared memory | 639.9 GFLOP/s (almost equal to 1D 32x32)|
+| 1D blocktiling 4x1 | I reused a column for 4 rows, four results per thread | 402.5 GFLOP/s (not the best)|
+| 2D blocktiling 4x4 | 16 results per thread, better readability, avoided bank conflicts | 2381.6 GFLOP/s|
+| 2D blocktiling 4x4 using `float4`| Vectorized global loads | 2981.6 GFLOP/s |
+| 2D blocktiling 8x8 | Even more work per thread (64 results) but initially slower than 4x4 | 2575 GFLOP/s |
+| A `4096x2048` B `2048x4096` and `float4` C stores | dimensions change, vectorized output stores | 3750 GFLOP/s |
+| Transposed + Double buffering | Two alternating shared-memory tiles | 3884 GFLOP/s |
+| Remapped shared B reads | Bank-conflict fix, older timing loop | 3946* GFLOP/s |
+| `__launch_bounds__(256, 2)` | Two resident blocks now fit instead of 1 | **4248** |
+| cuBLAS reference | Same comparison, median | **4622** |
 
-`4262` came from the previous comparison loop and I still need to run that exact optimized variant with the final separated benchmark, so I do not use it as the headline result yet.
 
-![My CUDA matmul performance journey so far](assets/full-performance-journey.svg)
+![SGEMM performance so far](assets/full-performance-journey.svg)
 
 ## Progress
 
@@ -109,7 +114,7 @@ threadIdx.x*n_float + j*(BN-(blockDim.x*n_float))
 
 That also meant the C output index had to follow the new ownership, the first version calculated correctly inside the kernel but wrote the results into the old positions and fixing that one expression was less straightforward than I expected, after the complete change this variant recorded **4262 GFLOP/s median** with the older timing loop.
 
-## Current comparison with cuBLAS
+## First separated comparison with cuBLAS
 
 I first measured my kernel and cuBLAS inside the same loop and the results moved more than I expected, in the latest comparison I put all launches of my kernel in one loop and all cuBLAS launches in another so they do not alternate and affect each measurement in the same way:
 
@@ -120,11 +125,48 @@ cuBLAS     min 14.131 ms (4863 GFLOP/s)  mediana 14.842 ms (4630 GFLOP/s)
 
 Using the medians my kernel reaches about **85.2% of cuBLAS**, while comparing the two best launches gives about 87.5%, I prefer the median as the main number because it represents the complete set of launches better and the result has been consistent across the runs I made in Google Colab.
 
-The final separated comparison currently uses the non-transposed double-buffering file while the 4262 GFLOP/s bank-conflict fix is in the transposed variant, so my next benchmark step is applying the final measurement loop to that exact variant before treating 4262 as the new repeatable result.
+The final separated comparison used the non-transposed double-buffering file while the 4262 GFLOP/s bank-conflict fix was in the transposed variant, the next change finally continued from that optimized transposed kernel and made its occupancy problem much clearer.
+
+## Closing this version with launch bounds
+
+When I profiled the latest kernel, `ptxas` reported 129 registers per thread and the block already had 256 threads, this was just one register above the limit that would allow another block to be resident so I added one declaration to the kernel:
+
+```cpp
+__global__ void __launch_bounds__(256, 2) blocktiling_2d_float4rb(...)
+```
+
+The first value says the block will have at most 256 threads and the second asks the compiler to make at least two blocks per SM possible, in this case it was enough to reduce the generated kernel from 129 to 128 registers per thread and the shared-memory carveout also moved from around 32 KB to 64 KB, so the second block was no longer stopped by either resource.
+
+| Nsight Compute metric | Before | After |
+|---|---:|---:|
+| Registers per thread | 129 | 128 |
+| Shared-memory configuration | 32.77 KB | 65.54 KB |
+| Block limit from registers / shared | 1 / 1 | 2 / 3 |
+| Theoretical / achieved occupancy | 25% / 24.97% | 50% / 49.06% |
+| Active warps per scheduler | 2.00 | 3.92 |
+| Issued warps per scheduler | 0.49 | 0.52 |
+| SM busy | 85.82% | 91.81% |
+| Elapsed cycles | 16,017,465 | 14,981,601 |
+| Waves per SM | 25.6 | 12.8 |
+
+It is a slightly strange result because one register changed the amount of work that could live on the SM at once, but the measured cycles dropped by **6.47%** and the regular timing improved by about 7%, close enough that the two measurements support each other instead of only showing a faster isolated launch.
+
+```text
+My kernel  min 15.917 ms (4317 GFLOP/s)  mediana 16.175 ms (4248 GFLOP/s)
+cuBLAS     min 14.804 ms (4642 GFLOP/s)  mediana 14.869 ms (4622 GFLOP/s)
+```
+
+That is **91.9% of cuBLAS using the medians** and about **93.0% using the best launches**, I also recorded 4565 GFLOP/s when running my kernel alone but I keep that separate because it is not the same direct comparison.
+
+During the profiled run the T4 sustained around 941 MHz, which gives a clock-specific FP32 ceiling of about `2560 * 2 * 941 MHz = 4818 GFLOP/s`, the 4317 GFLOP/s launch is around **89.6% of that ceiling** while cuBLAS is around 96%, and Nsight Compute attributed 89.59% of the cycle budget to FFMA which is a useful second way of seeing that most of the kernel is now the multiplication work itself.
+
+The remaining reports also showed zero spills, no shared-memory bank conflicts, no divergence and 100% branch efficiency, the largest stall category left was Math Pipe Throttle which in this situation mostly means the FP32 pipe is already busy executing the FFMA instructions, there are still smaller things that could be studied in SASS or instruction scheduling but the easy large bottlenecks that moved the previous versions are not there anymore.
+
+For me this is a reasonable place to close this branch of the project, not because the kernel cannot improve but because the remaining theoretical headroom is only around 11.6% even before considering how difficult perfect scheduling would be, continuing from here would mean spending much more time on register allocation and small instruction-level changes for a very different cost and benefit than the earlier optimizations.
 
 ## Benchmark notes
 
-All these numbers are kernel-only measurements recorded on an NVIDIA T4 in Google Colab, the latest runs reported 1590 MHz and a 70 W power limit, the early kernels and the first 4x4 blocktiling used smaller matrices while the newer 8x8 and double-buffering kernels use `4096x2048 * 2048x4096`, so the graph marks where that benchmark shape changed.
+All these numbers are kernel-only measurements recorded on an NVIDIA T4 in Google Colab, the profiled launch used for the clock-specific ceiling sustained around 941 MHz under the 70 W limit while other runs can report different clocks, the early kernels and the first 4x4 blocktiling used smaller matrices while the newer 8x8 and double-buffering kernels use `4096x2048 * 2048x4096`, so the graph marks where that benchmark shape changed.
 
 The kernels are still written for the aligned dimensions used in their tests and do not handle arbitrary leftover M, N or K tiles yet, the result checks compare the complete output against a CPU reference or cuBLAS but there is still benchmark variance and the commit history contains the exact results and failed versions behind this summary.
 

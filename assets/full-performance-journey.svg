@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="480" viewBox="0 0 1320 480">
-  <rect width="1320" height="480" fill="white"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1430" height="480" viewBox="0 0 1430 480">
+  <rect width="1430" height="480" fill="white"/>
 
-  <text x="660" y="24" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="15">My CUDA matmul performance journey so far</text>
+  <text x="715" y="24" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="15">My CUDA matmul performance journey so far</text>
 
   <line x1="66" y1="45" x2="66" y2="390" stroke="black"/>
-  <line x1="66" y1="390" x2="1290" y2="390" stroke="black"/>
+  <line x1="66" y1="390" x2="1400" y2="390" stroke="black"/>
 
   <g font-family="DejaVu Sans, sans-serif" font-size="11" text-anchor="end">
     <text x="58" y="394">0</text>
@@ -16,11 +16,11 @@
   </g>
 
   <g stroke="#dddddd">
-    <line x1="66" y1="321" x2="1290" y2="321"/>
-    <line x1="66" y1="252" x2="1290" y2="252"/>
-    <line x1="66" y1="183" x2="1290" y2="183"/>
-    <line x1="66" y1="114" x2="1290" y2="114"/>
-    <line x1="66" y1="45" x2="1290" y2="45"/>
+    <line x1="66" y1="321" x2="1400" y2="321"/>
+    <line x1="66" y1="252" x2="1400" y2="252"/>
+    <line x1="66" y1="183" x2="1400" y2="183"/>
+    <line x1="66" y1="114" x2="1400" y2="114"/>
+    <line x1="66" y1="45" x2="1400" y2="45"/>
   </g>
 
   <text x="17" y="218" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="11" transform="rotate(-90 17 218)">Performance (GFLOP/s)</text>
@@ -38,7 +38,8 @@
     <rect x="1074" y="117.7" width="72" height="272.3"/>
   </g>
 
-  <rect x="1184" y="70.5" width="72" height="319.5" fill="#f28e2b"/>
+  <rect x="1184" y="96.9" width="72" height="293.1" fill="#4c78a8"/>
+  <rect x="1294" y="71.1" width="72" height="318.9" fill="#f28e2b"/>
 
   <line x1="830" y1="45" x2="830" y2="390" stroke="#777777" stroke-dasharray="5 5"/>
   <text x="822" y="220" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="10" fill="#555555" transform="rotate(-90 822 220)">matrix size changed</text>
@@ -54,7 +55,8 @@
     <text x="890" y="125">3750</text>
     <text x="1000" y="116">3884</text>
     <text x="1110" y="111">3946</text>
-    <text x="1220" y="64">4630</text>
+    <text x="1220" y="90">4248</text>
+    <text x="1330" y="65">4622</text>
 
     <text x="120" y="407">Naïve</text>
     <text x="120" y="421">matmul</text>
@@ -83,19 +85,22 @@
     <text x="1000" y="407">Double</text>
     <text x="1000" y="421">buffering</text>
 
-    <text x="1110" y="407">Final custom</text>
+    <text x="1110" y="407">Before bounds</text>
     <text x="1110" y="421">median</text>
 
-    <text x="1220" y="407">cuBLAS</text>
+    <text x="1220" y="407">launch_bounds</text>
     <text x="1220" y="421">median</text>
+
+    <text x="1330" y="407">cuBLAS</text>
+    <text x="1330" y="421">median</text>
   </g>
 
   <g font-family="DejaVu Sans, sans-serif" font-size="10">
-    <rect x="1030" y="440" width="12" height="12" fill="#4c78a8"/>
-    <text x="1048" y="450">My kernels</text>
-    <rect x="1135" y="440" width="12" height="12" fill="#f28e2b"/>
-    <text x="1153" y="450">cuBLAS reference</text>
+    <rect x="1140" y="440" width="12" height="12" fill="#4c78a8"/>
+    <text x="1158" y="450">My kernels</text>
+    <rect x="1245" y="440" width="12" height="12" fill="#f28e2b"/>
+    <text x="1263" y="450">cuBLAS reference</text>
   </g>
 
-  <text x="660" y="470" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="9">Recorded on an NVIDIA T4 in Google Colab; selected milestones use different matrix shapes and timing loops as described in the README</text>
+  <text x="715" y="470" text-anchor="middle" font-family="DejaVu Sans, sans-serif" font-size="9">Recorded on an NVIDIA T4 in Google Colab; selected milestones use different matrix shapes and timing loops as described in the README</text>
 </svg>
