@@ -26,17 +26,26 @@ One disclaimer that I want to make is that my measurements may not always be per
 | A `4096x2048` B `2048x4096` and `float4` C stores | dimensions change, vectorized output stores | 3750 GFLOP/s |
 | Transposed + Double buffering | Two alternating shared-memory tiles | 3884 GFLOP/s |
 | Remapped shared B reads | Bank-conflict fix, older timing loop | 3946* GFLOP/s |
-| `__launch_bounds__(256, 2)` | Two resident blocks now fit instead of 1 | **4248** |
-| cuBLAS reference | Same comparison, median | **4622** |
+| `__launch_bounds__(256, 2)` | Two resident blocks now fit instead of 1 | **4248** GFLOP/s |
+| cuBLAS reference | Same comparison, median | **4622** GFLOP/s |
 
 
 ![SGEMM performance so far](assets/full-performance-journey.svg)
 
-## Progress
+## My Progress
 
-I started with [`vector_add.cu`](vector-add/vector_add.cu) to understand allocation, copies and how threads map to values, then I wrote a [naïve matmul](matmul/naive-matmul.cu) where my first problems were actually outside the kernel because I allocated B with the wrong size, initialized the wrong pointer and copied A twice, after fixing it the kernel reached **355.9 GFLOP/s**.
+I started with [`vector_add.cu`](vector-add/vector_add.cu) to understand allocation, how threads map to values, and to learn the most basic cuda commands, there is not much to remark about that kernel.
 
-My first [tiled version](tiled-matmul/tiled_matmul_1d.cu) used flattened shared memory because I had not learned 2D arrays yet and this made the indexing much harder for me, the first correct version only reached **195.1 GFLOP/s**, then I padded the B tile and later changed how B arrived from global memory so a warp could load consecutive values from a row:
+After that, I wrote a [naïve matmul](matmul/naive-matmul.cu), as my first introduction to matmul, I chose matmul after vector addition since I wanted to write a kernel where the GPU implementation could beat my CPU by a wide margin, and so I chose matmul. When I wrote it, I was making many rookie mistakes, like allocating B with the wrong size, initializing pointers wrongly, or copying A twice, but after fixing everything my kernel reached **355.9 GFLOP/s**.
+
+The problem my naïve matmul had, was that for every C[i], I had to read an entire row from A and an entire column for B, from global memory, and each access can take up to a couple hundred cycles of waiting (even tho my cache was kinda saving me as we will see).
+So the solution to this problem is using the shared memory, to which an access, without any bank conflicts can take just around 20 to 22 cycles. So I had to find a way to load info from global into shared, and then to reuse that information in shared as much as I could, and that way I would try to minimize my accesses to global.
+
+The solution to the problem I just described was my first [tiled matmul](tiled-matmul/tiled_matmul_1d.cu), where I ended up using a flattened shared memory (1D) and overcomplicating my indexes to the point debugging actually took time because I had not learned 2D arrays yet.
+
+But something surprising happened, since theoretically what I was doing should have achieved a better result than my [naïve matmul](matmul/naive-matmul.cu), but my first ever correct output tiled matmul version only reached **195.1 GFLOP/s**, almost 2 times slower than my naïve matmul, which did not use tiling.
+
+There were 2 main reasons for it being slower than my naïve matmul, the first one, is that unknowingly at the moment, my naïve matmul was using the cache to actually not have to make that many calls to the global memory, and the second reason was that my implementation was suffering from bank conflicts, and it was also not coalesced.  then I padded the B tile and later changed how B arrived from global memory so a warp could load consecutive values from a row:
 
 ```cpp
 __shared__ float shared_memory_2[32*33];
