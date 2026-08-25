@@ -28,7 +28,7 @@ __global__ void tensor_cores(int A_num_fil, int A_num_col,float *A, int B_num_fi
     wmma::fill_fragment(accumulator_frag, 0.0f);
 
     //Índices
-    int global_warp_index = (blockDim.x * blockIdx.y + threadIdx.x)/warpSize;
+    int local_warp_index = (threadIdx.y/2);
     int global_column = blockDim.x * blockIdx.x;
     int global_row = blockDim.y * blockIdx.y;
 
@@ -55,18 +55,22 @@ __global__ void tensor_cores(int A_num_fil, int A_num_col,float *A, int B_num_fi
         
         __syncthreads();
 
-        wmma::load_matrix_sync(a_fragment, &shared_memory_1[0][0], tensor_K);
-        wmma::load_matrix_sync(b_fragment, &shared_memory_2[0][0], tensor_N);
+        if (local_warp_index == 0){
+            wmma::load_matrix_sync(a_fragment, &shared_memory_1[0][0], tensor_K);
+            wmma::load_matrix_sync(b_fragment, &shared_memory_2[0][0], tensor_N);
 
-        wmma::mma_sync(accumulator_frag, a_fragment, b_fragment, accumulator_frag);
-
+            wmma::mma_sync(accumulator_frag, a_fragment, b_fragment, accumulator_frag);
+        }
         __syncthreads();
 
     }
     
     int puntero_resultado_C = global_row*B_num_col + global_column;
 
-    wmma::store_matrix_sync(&C[puntero_resultado_C], accumulator_frag, B_num_col, wmma::mem_row_major);
+    if (local_warp_index == 0){
+        wmma::store_matrix_sync(&C[puntero_resultado_C], accumulator_frag, B_num_col, wmma::mem_row_major);
+
+    }
 
 }
 
