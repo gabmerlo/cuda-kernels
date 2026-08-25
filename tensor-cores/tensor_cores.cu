@@ -64,9 +64,9 @@ __global__ void tensor_cores(int A_num_fil, int A_num_col,float *A, int B_num_fi
 
         wmma::mma_sync(accumulator_frag, a_fragment, b_fragment, accumulator_frag);
 
-    }
+        __syncthreads();
 
-    __syncthreads();
+    }
     
     int puntero_resultado_C = global_row*B_num_col + global_column;
 
