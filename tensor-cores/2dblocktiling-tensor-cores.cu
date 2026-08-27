@@ -62,6 +62,9 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     int A_tile_row = global_row;
     int B_tile_col = global_column;
     int B_tile_row = 0; // i * tensor_K;
+
+    float4 store_values_a[4];
+    float4 store_values_b[4];
     
     //Esto era usado por thread pero lo dejo comentado por si me inspira
     //Position inside the dim3 threads adapted to fit A
@@ -70,74 +73,61 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
     //Thread Distribution inside A fragment
     for(int i = 0; i < (BM*BK)/(blockDim.x*blockDim.y*n_float); i ++){
-        int a_col = threadIdx.x + (threadIdx.y%2)*blockDim.x;
-        int a_row = threadIdx.y/2 + i*8;
+        int a_col = (threadIdx.x%8)*4;
+        int a_row = threadIdx.y*2 + i*32;
         
-        int b_row = threadIdx.y/8 + i*2;
-        int b_col = threadIdx.x + (threadIdx.y%8)*blockDim.x;
+        int b_row = threadIdx.y/2 + i*8;
+        int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
 
         a_pointer = A_tile_row * A_num_col + A_tile_col + a_col + a_row*A_num_col;
         b_pointer = B_tile_row * B_num_col + B_tile_col + b_col + b_row*B_num_col;
 
-        shared_memory_1[a_row][a_col] = A[thread_A_pointer];
-        shared_memory_2[b_row][b_col] = B[thread_B_pointer];
-    }
+        float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
+        float4 f4_b = reinterpret_cast<const float4*>(B)[b_pointer / 4];
 
+        shared_memory_1[actual][a_row][a_col + 0] = f4_a.x;
+        shared_memory_1[actual][a_row][a_col + 1] = f4_a.y;
+        shared_memory_1[actual][a_row][a_col + 2] = f4_a.z;
+        shared_memory_1[actual][a_row][a_col + 3] = f4_a.w;
 
-    int a_pointer = A_tile_row * A_num_col + A_tile_col row_ini_bloque*A_num_col + col_pos_a + row_pos_a*A_num_col;
+        shared_memory_2[actual][b_row][b_col + 0] = f4_b.x;
+        shared_memory_2[actual][b_row][b_col + 1] = f4_b.y;
+        shared_memory_2[actual][b_row][b_col + 2] = f4_b.z;
+        shared_memory_2[actual][b_row][b_col + 3] = f4_b.w;
 
-    float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
+        __syncthreads();
 
-    shared_memory_1[actual][row_pos_a][col_pos_a + 0] = f4_a.x;
-    shared_memory_1[actual][row_pos_a][col_pos_a + 1] = f4_a.y;
-    shared_memory_1[actual][row_pos_a][col_pos_a + 2] = f4_a.z;
-    shared_memory_1[actual][row_pos_a][col_pos_a + 3] = f4_a.w;
-
-    //Position inside the dim3 threads adapted to fit B
-    int col_pos_b = threadIdx.x*4 + (threadIdx.y%2)*64;
-    int row_pos_b = threadIdx.y/2;
-
-    int b_pointer = col_ini_bloque + col_pos_b + row_pos_b*B_num_col ;
-
-    float4 f4_b = reinterpret_cast<const float4*>(B)[b_pointer / 4];
-
-    shared_memory_2[actual][row_pos_b][col_pos_b + 0] = f4_b.x;
-    shared_memory_2[actual][row_pos_b][col_pos_b + 1] = f4_b.y;
-    shared_memory_2[actual][row_pos_b][col_pos_b + 2] = f4_b.z;
-    shared_memory_2[actual][row_pos_b][col_pos_b + 3] = f4_b.w;
-
+}
     actual = 1 - actual;
 
-    __syncthreads();
 
     for (int k = 1; k < (A_num_col / BK); k ++){
 
-        int col_ini_a = k * BK;
-        int row_ini_b = k * BK;
-
-        //Position inside the dim3 threads adapted to fit A
-        int col_pos_a = (threadIdx.x%(BK/n_float))*n_float;
-        int row_pos_a = threadIdx.y*8 + threadIdx.x/2;
-
-        //Position inside A, +1 for the double buffering
-        int a_pointer = row_ini_bloque*A_num_col + col_ini_a + col_pos_a + row_pos_a*A_num_col + 1;
-
-        float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
+        A_tile_col = k*BK; 
+        B_tile_row = k*BK; 
 
 
-        //Position inside the dim3 threads adapted to fit B
-        int col_pos_b = threadIdx.x*4 + (threadIdx.y%2)*64;
-        int row_pos_b = threadIdx.y/2;
+        for(int i = 0; i < (BM*BK)/(blockDim.x*blockDim.y*n_float); i ++){
+            int a_col = (threadIdx.x%8)*4;
+            int a_row = threadIdx.y*2 + i*32;
+            
+            int b_row = threadIdx.y/2 + i*8;
+            int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
 
-        int b_pointer = col_ini_bloque + col_pos_b + row_ini_b*B_num_col + row_pos_b*B_num_col ;
+            a_pointer = A_tile_row * A_num_col + A_tile_col + a_col + a_row*A_num_col;
+            b_pointer = B_tile_row * B_num_col + B_tile_col + b_col + b_row*B_num_col;
 
-        float4 f4_b = reinterpret_cast<const float4*>(B)[b_pointer / 4];
+            float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
+            float4 f4_b = reinterpret_cast<const float4*>(B)[b_pointer / 4];
+
+            store_values_a[i] = f4_a;
+            store_values_a[i] = f4_b;
+}
 
 
+        for (int i = 0; i < (W_tile_M*W_tile_N)/(tensor_M*tensor_N); i ++){
 
-        for (int i = 0; i < BK; i ++){
-
-            for (int j = 0; j < TM; j++){
+            for (int j = 0; j < W_tile_M/tensor_K; j++){
                 regA[j] = shared_memory_1[1 - actual][(threadIdx.y*TM)+j][(i)];
             }
 
@@ -159,16 +149,18 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
     }
 
-        shared_memory_1[actual][row_pos_a][col_pos_a + 0] = f4_a.x;
-        shared_memory_1[actual][row_pos_a][col_pos_a + 1] = f4_a.y;
-        shared_memory_1[actual][row_pos_a][col_pos_a + 2] = f4_a.z;
-        shared_memory_1[actual][row_pos_a][col_pos_a + 3] = f4_a.w;
 
 
-        shared_memory_2[actual][row_pos_b][col_pos_b + 0] = f4_b.x;
-        shared_memory_2[actual][row_pos_b][col_pos_b + 1] = f4_b.y;
-        shared_memory_2[actual][row_pos_b][col_pos_b + 2] = f4_b.z;
-        shared_memory_2[actual][row_pos_b][col_pos_b + 3] = f4_b.w;
+        shared_memory_1[actual][a_row][a_col + 0] = f4_a.x;
+        shared_memory_1[actual][a_row][a_col + 1] = f4_a.y;
+        shared_memory_1[actual][a_row][a_col + 2] = f4_a.z;
+        shared_memory_1[actual][a_row][a_col + 3] = f4_a.w;
+
+        shared_memory_2[actual][b_row][b_col + 0] = f4_b.x;
+        shared_memory_2[actual][b_row][b_col + 1] = f4_b.y;
+        shared_memory_2[actual][b_row][b_col + 2] = f4_b.z;
+        shared_memory_2[actual][b_row][b_col + 3] = f4_b.w;
+
 
         actual = 1 - actual;
 
