@@ -12,11 +12,11 @@ constexpr int BM = 128;
 constexpr int BN = 128;
 constexpr int BK = 32;
 
-constexpr int dim_WM = 4;
-constexpr int dim_WN = 2;
+constexpr int dim_WM = 2;
+constexpr int dim_WN = 4;
 
-constexpr W_tile_M = 32;
-constexpr W_tile_N = 64;
+constexpr int W_tile_M = 64;
+constexpr int W_tile_N = 32;
 
 
 constexpr int tensor_M = 16;
@@ -48,8 +48,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     int local_warp_index = threadIdx.y/2;
     int actual = 0;
 
-    __shared__ float shared_memory_1[2][BM][BK];
-    __shared__ float shared_memory_2[2][BK][BN];
+    __shared__ half shared_memory_1[2][BM][BK];
+    __shared__ half shared_memory_2[2][BK][BN];
 
 
     //Primera fase
@@ -70,11 +70,15 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     //Position inside the dim3 threads adapted to fit A
     // int col_pos_a = (threadIdx.x%(BK/n_float))*n_float;
     // int row_pos_a = threadIdx.y*8 + threadIdx.x/2;
+    
+    //I forgot to declare these
 
+    int a_pointer = 0;
+    int b_pointer = 0;
     //Thread Distribution inside A fragment
     for(int i = 0; i < (BM*BK)/(blockDim.x*blockDim.y*n_float); i ++){
         int a_col = (threadIdx.x%8)*4;
-        int a_row = threadIdx.y*2 + i*32;
+        int a_row = threadIdx.y*2 + i*32 + threadIdx.x/8;
 
         int b_row = threadIdx.y/2 + i*8;
         int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
@@ -121,50 +125,48 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
             float4 f4_b = reinterpret_cast<const float4*>(B)[b_pointer / 4];
 
             store_values_a[i] = f4_a;
-            store_values_a[i] = f4_b;
+            store_values_b[i] = f4_b;
 }
 
 
         for (int i = 0; i < BK/tensor_K; i ++){
-
-            wmma::load_matrix_sync(a_fragment(j), &shared_memory_1[1-actual][tensor_M*(local_warp_index/4)][(local_warp_index%4)*tensor_K], tensor_K);
             
-            for (int j = 0; j < W_tile_M/tensor_K; j++){
-                wmma::load_matrix_sync(a_fragment(j), &shared_memory_1[1-actual][(local_warp_index%4)*tensor_M][i*tensor_K], tensor_K);
+            for (int j = 0; j < W_tile_M/tensor_M; j++){
+                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/2)*(BM/2) + j*tensor_K][i*tensor_K], BK);
             }
 
-            for (int j = 0; j < W_tile_N/tensor_K; j++){
-                wmma::load_matrix_sync(a_fragment(j), &shared_memory_2[1-actual][local_warp_index*tensor_K][], tensor_K);
-                fragment_a[j] = shared_memory_1[1 - actual][(threadIdx.y*TM)+j][(i)];
-
-                float4 f4_rb = reinterpret_cast<const float4*>(&shared_memory_2[1 - actual][i][threadIdx.x*TN +j*n_float])[0];
-
-                regB[j*n_float] = f4_rb.x;
-                regB[j*n_float + 1] = f4_rb.y;
-                regB[j*n_float + 2] = f4_rb.z;
-                regB[j*n_float + 3] = f4_rb.w;
-
+            for (int j = 0; j < W_tile_N/tensor_N; j++){
+                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[1-actual][i*tensor_K][(local_warp_index%4)*(BN/4) + j*tensor_K], BN);
             }
 
-            for(int j = 0; j < TM; j++){
-                for (int t = 0; t < TN; t ++){
-                    sum[j][t] += regA[j]*regB[t];
+            for(int j = 0; j < dim_WM; j++){
+                for (int t = 0; t < dim_WN; t ++){
+                    wmma::mma_sync(accumulator_frag[j][t],a_fragment[j],b_fragment[t],accumulator_frag[j][t]);
                 }
             }
 
     }
 
+    __syncthreads();
 
+        //repito mi código
+        for(int i = 0; i < (BM*BK)/(blockDim.x*blockDim.y*n_float); i ++){
+            int a_col = (threadIdx.x%8)*4;
+            int a_row = threadIdx.y*2 + threadIdx.x/8 + i*32;
 
-        shared_memory_1[actual][a_row][a_col + 0] = f4_a.x;
-        shared_memory_1[actual][a_row][a_col + 1] = f4_a.y;
-        shared_memory_1[actual][a_row][a_col + 2] = f4_a.z;
-        shared_memory_1[actual][a_row][a_col + 3] = f4_a.w;
+            int b_row = threadIdx.y/2 + i*8;
+            int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
 
-        shared_memory_2[actual][b_row][b_col + 0] = f4_b.x;
-        shared_memory_2[actual][b_row][b_col + 1] = f4_b.y;
-        shared_memory_2[actual][b_row][b_col + 2] = f4_b.z;
-        shared_memory_2[actual][b_row][b_col + 3] = f4_b.w;
+            shared_memory_1[actual][a_row][a_col + 0] = store_values_a[i].x;
+            shared_memory_1[actual][a_row][a_col + 1] = store_values_a[i].y;
+            shared_memory_1[actual][a_row][a_col + 2] = store_values_a[i].z;
+            shared_memory_1[actual][a_row][a_col + 3] = store_values_a[i].w;
+
+            shared_memory_2[actual][b_row][b_col + 0] = store_values_b[i].x;
+            shared_memory_2[actual][b_row][b_col + 1] = store_values_b[i].y;
+            shared_memory_2[actual][b_row][b_col + 2] = store_values_b[i].z;
+            shared_memory_2[actual][b_row][b_col + 3] = store_values_b[i].w;
+        }
 
 
         actual = 1 - actual;
@@ -176,40 +178,36 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 }
     //Operando el último tile
 
-    for (int i = 0; i < BK; i ++){
-
-            for (int j = 0; j < TM; j++){
-                regA[j] = shared_memory_1[1 - actual][(threadIdx.y*TM)+j][(i)];
+    for (int i = 0; i < BK/tensor_K; i ++){
+            
+            for (int j = 0; j < W_tile_M/tensor_M; j++){
+                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/2)*(BM/2) + j*tensor_K][i*tensor_K], BK);
             }
 
-            for (int j = 0; j < TN/n_float; j++){
-                float4 f4_rb = reinterpret_cast<const float4*>(&shared_memory_2[1 - actual][i][threadIdx.x*TN +j*n_float])[0];
-
-                regB[j*n_float] = f4_rb.x;
-                regB[j*n_float + 1] = f4_rb.y;
-                regB[j*n_float + 2] = f4_rb.z;
-                regB[j*n_float + 3] = f4_rb.w;
-
+            for (int j = 0; j < W_tile_N/tensor_N; j++){
+                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[1-actual][i*tensor_K][(local_warp_index%4)*(BN/4) + j*tensor_K], BN);
             }
 
-            for(int j = 0; j < TM; j++){
-                for (int t = 0; t < TN; t ++){
-                    sum[j][t] += regA[j]*regB[t];
+            for(int j = 0; j < dim_WM; j++){
+                for (int t = 0; t < dim_WN; t ++){
+                    wmma::mma_sync(accumulator_frag[j][t],a_fragment[j],b_fragment[t],accumulator_frag[j][t]);
                 }
             }
+
     }
 
     __syncthreads();
 
-    //subimos nuestros resultados, estoy probando con float4, por lo que he tenido que cambiar cuánto aumenta i
+    //subimos nuestros resultados, ya no uso float4
 
-    for (int i = 0; i < TM*TN; i += n_float){
-        int c_address = B_num_col* (row_ini_bloque + threadIdx.y*TM + (i/TN)) + col_ini_bloque + i%TN + threadIdx.x*TN;
+    for (int j = 0; j < W_tile_M/tensor_M; j++){
+        for (int s = 0; s < W_tile_N/tensor_N; s++){
 
-        float4 results = make_float4(sum[i/TM][i%TN],sum[i/TM][(i%TN) + 1], sum[i/TM][(i%TN) + 2], sum[i/TM][(i%TN) + 3]);
-        reinterpret_cast<float4*>(&C[c_address])[0] = results;
-
+            wmma::store_matrix_sync(&C[(global_row + (local_warp_index / dim_WN)*W_tile_M + j*tensor_M)*B_num_col + (global_column + (local_warp_index % dim_WN)*W_tile_N  + s*tensor_N)],accumulator_frag[j][s],B_num_col,wmma::mem_row_major);
         }
+    }
+
+    
 
 
 }
