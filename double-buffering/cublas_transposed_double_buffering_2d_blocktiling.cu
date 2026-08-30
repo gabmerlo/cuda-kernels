@@ -1,3 +1,4 @@
+%%writefile doublebuffersgemm.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
@@ -24,7 +25,7 @@ mt19937 gen(rd());
 uniform_real_distribution<float> dist(-2.0, 2.0);
 
 
-__global__ void __launch_bounds__(256, 2) blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
+__global__ void __launch_bounds__(256, 2) blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const float* __restrict__ A, int B_num_fil, int B_num_col,const float* __restrict__ B, float* __restrict__ C){
 
     int actual = 0;
     __shared__ float shared_memory_1[2][BK][BM+4];
@@ -281,8 +282,8 @@ int main(){
     double flops = 2.0 * A_num_fil * B_num_col * A_num_col;
 
 
-    report("Sin cublass", times_2, N_ITER, flops);
-    report("Con cublass", times, N_ITER, flops);
+    report("Kernel Propio SGEMM:", times_2, N_ITER, flops);
+    report("SGEMM cuBLAS", times, N_ITER, flops);
 
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
