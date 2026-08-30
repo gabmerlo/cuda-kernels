@@ -26,8 +26,11 @@ constexpr int W_tile_N = 32;
 constexpr int tensor_M = 16;
 constexpr int tensor_N = 16;
 constexpr int tensor_K = 16;
+constexpr int num_threads = 256;
 
 constexpr int n_float = 4;
+
+constexpr int carga_cada_thread = (BM * BK) / (num_threads * n_float);
 
 using namespace std;
 
@@ -67,8 +70,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     int B_tile_col = global_column;
     int B_tile_row = 0; // i * tensor_K;
 
-    float4 store_values_a[4];
-    float4 store_values_b[4];
+    float4 store_values_a[carga_cada_thread];
+    float4 store_values_b[carga_cada_thread];
 
     //Esto era usado por thread pero lo dejo comentado por si me inspira
     //Position inside the dim3 threads adapted to fit A
@@ -80,7 +83,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     int a_pointer = 0;
     int b_pointer = 0;
     //Thread Distribution inside A fragment
-    for(int i = 0; i < (BM*BK)/(blockDim.x*blockDim.y*n_float); i ++){
+    for(int i = 0; i < carga_cada_thread; i ++){
         int a_col = (threadIdx.x%8)*4;
         int a_row = threadIdx.y*2 + i*32 + threadIdx.x/8;
 
@@ -115,7 +118,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
         B_tile_row = k*BK;
 
 
-        for(int i = 0; i < (BM*BK)/(blockDim.x*blockDim.y*n_float); i ++){
+        for(int i = 0; i < carga_cada_thread; i ++){
             int a_col = (threadIdx.x%8)*4;
             int a_row = threadIdx.y*2 + i*32 + threadIdx.x/8;
 
@@ -154,7 +157,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     __syncthreads();
 
         //repito mi código
-        for(int i = 0; i < (BM*BK)/(blockDim.x*blockDim.y*n_float); i ++){
+        for(int i = 0; i < carga_cada_thread; i ++){
             int a_col = (threadIdx.x%8)*4;
             int a_row = threadIdx.y*2 + threadIdx.x/8 + i*32;
 
