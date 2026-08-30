@@ -6,6 +6,7 @@
 #include <cmath>
 #include <mma.h>
 #include <cublas_v2.h>
+#include <cuda_fp16.h>
 
 using namespace nvcuda;
 
@@ -215,6 +216,11 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
 }
 
+__global__ void f32_to_f16(const float* __restrict__ src, half* __restrict__ dst, size_t n) {
+    size_t i = blockIdx.x * (size_t)blockDim.x + threadIdx.x;
+    if (i < n) dst[i] = __float2half(src[i]);
+}
+
 void report(const char* nombre, float* t, int n, double flops) {
         std::sort(t, t + n);
         printf("%-8s  min %.3f ms (%.0f GFLOP/s)   mediana %.3f ms (%.0f GFLOP/s)\n",
@@ -242,6 +248,8 @@ int main(){
     float *h_C = (float*)malloc(bytes_C);
     float *h_C_2 = (float*)malloc(bytes_C);
 
+
+
     for (int i = 0; i < N_A; i ++){
         h_A[i] = dist(gen);
     }
@@ -260,6 +268,10 @@ int main(){
     float *d_B;
     float *d_C;
     float *d_C_cub;
+    half *d_Ah, *d_Bh;
+    cudaMalloc(&d_Ah, (size_t)N_A * sizeof(half));
+    cudaMalloc(&d_Bh, (size_t)N_B * sizeof(half));
+    
 
     cudaMalloc(&d_A, bytes_A);
     cudaMalloc(&d_B, bytes_B);
@@ -269,7 +281,10 @@ int main(){
 
     cudaMemcpy(d_A, h_A, bytes_A, cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B, bytes_B, cudaMemcpyHostToDevice);
-
+    f32_to_f16<<<(N_A + 255) / 256, 256>>>(d_A, d_Ah, N_A);
+    f32_to_f16<<<(N_B + 255) / 256, 256>>>(d_B, d_Bh, N_B);
+    cudaDeviceSynchronize();
+    
     dim3 threads(16,16);
     dim3 blocks(
         (B_num_col + BN - 1)/BN,
@@ -284,10 +299,8 @@ int main(){
             B_num_fil, B_num_col, d_B, d_C
         );
 
-        cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                B_num_col, A_num_fil, A_num_col, &alfa, d_B, B_num_col, d_A, A_num_col, &beta_gemm, d_C_cub, B_num_col);
-
-
+        cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
+             d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 
     }
 
@@ -310,10 +323,12 @@ int main(){
         cudaEventRecord(stop);
         cudaEventSynchronize(stop);
         cudaEventElapsedTime(&times_2[i], start, stop);
+    }
 
+    for (int i = 0; i < N_ITER; i++) {
         cudaEventRecord(start);
-        cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                B_num_col, A_num_fil, A_num_col, &alfa, d_B, B_num_col, d_A, A_num_col, &beta_gemm, d_C_cub, B_num_col);
+        cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
+             d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
         cudaEventRecord(stop);
         cudaEventSynchronize(stop);
         cudaEventElapsedTime(&times[i], start, stop);
@@ -323,7 +338,7 @@ int main(){
 
 
     report("Tensor Core Kernel", times_2, N_ITER, flops);
-    report("SGEMM cuBLAS", times, N_ITER, flops);
+    report("GEMM cuBLAS", times, N_ITER, flops);
 
 
     cudaEventDestroy(start);
