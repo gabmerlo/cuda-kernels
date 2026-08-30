@@ -12,8 +12,8 @@ constexpr int BM = 128;
 constexpr int BN = 128;
 constexpr int BK = 32;
 
-constexpr int dim_WM = 2;
-constexpr int dim_WN = 4;
+constexpr int dim_WM = 4;
+constexpr int dim_WN = 2;
 
 constexpr int W_tile_M = 64;
 constexpr int W_tile_N = 32;
@@ -70,7 +70,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     //Position inside the dim3 threads adapted to fit A
     // int col_pos_a = (threadIdx.x%(BK/n_float))*n_float;
     // int row_pos_a = threadIdx.y*8 + threadIdx.x/2;
-    
+
     //I forgot to declare these
 
     int a_pointer = 0;
@@ -113,7 +113,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
         for(int i = 0; i < (BM*BK)/(blockDim.x*blockDim.y*n_float); i ++){
             int a_col = (threadIdx.x%8)*4;
-            int a_row = threadIdx.y*2 + i*32;
+            int a_row = threadIdx.y*2 + i*32 + threadIdx.x/8;
 
             int b_row = threadIdx.y/2 + i*8;
             int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
@@ -130,9 +130,9 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
 
 
         for (int i = 0; i < BK/tensor_K; i ++){
-            
+
             for (int j = 0; j < W_tile_M/tensor_M; j++){
-                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/2)*(BM/2) + j*tensor_K][i*tensor_K], BK);
+                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/4)*64 + j*tensor_K][i*tensor_K], BK);
             }
 
             for (int j = 0; j < W_tile_N/tensor_N; j++){
@@ -179,9 +179,9 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     //Operando el último tile
 
     for (int i = 0; i < BK/tensor_K; i ++){
-            
+
             for (int j = 0; j < W_tile_M/tensor_M; j++){
-                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/2)*(BM/2) + j*tensor_K][i*tensor_K], BK);
+                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/4)*(BM/2) + j*tensor_K][i*tensor_K], BK);
             }
 
             for (int j = 0; j < W_tile_N/tensor_N; j++){
@@ -203,11 +203,11 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     for (int j = 0; j < W_tile_M/tensor_M; j++){
         for (int s = 0; s < W_tile_N/tensor_N; s++){
 
-            wmma::store_matrix_sync(&C[(global_row + (local_warp_index / dim_WN)*W_tile_M + j*tensor_M)*B_num_col + (global_column + (local_warp_index % dim_WN)*W_tile_N  + s*tensor_N)],accumulator_frag[j][s],B_num_col,wmma::mem_row_major);
+            wmma::store_matrix_sync(&C[(global_row + (local_warp_index / 4)*64 + j*tensor_M)*B_num_col + (global_column + (local_warp_index % 4)*32  + s*tensor_N)],accumulator_frag[j][s],B_num_col,wmma::mem_row_major);
         }
     }
 
-    
+
 
 
 }
@@ -245,6 +245,8 @@ int main(){
     for (int i = 0; i < N_B; i ++){
         h_B[i] = dist(gen);
     }
+
+    
 
 
     //I usually remove this part if I'm working with 4096, but I reduce dimensions and leave this part if
@@ -308,7 +310,7 @@ int main(){
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
-    cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_C_2, d_C, bytes_C, cudaMemcpyDeviceToHost);
 
     //New bench, to help me not miss anything
     double max_diff = 0.0;
@@ -324,12 +326,12 @@ int main(){
     cudaFree(d_C);
 
     for(int i = 0; i < 5; i ++){
-        printf("%f\n",h_C[i]);
+        printf("%f\n",h_C_2[i]);
     }
-    printf("Últimos: %f\n", h_C[N_C - 1]);
-    printf("Últimos: %f\n", h_C[N_C - 2]);
-    printf("Últimos: %f\n", h_C[N_C - 3]);
-    printf("Últimos: %f\n", h_C[N_C - 4]);
+    printf("Últimos: %f\n", h_C_2[N_C - 1]);
+    printf("Últimos: %f\n", h_C_2[N_C - 2]);
+    printf("Últimos: %f\n", h_C_2[N_C - 3]);
+    printf("Últimos: %f\n", h_C_2[N_C - 4]);
 
     return 0;
 
