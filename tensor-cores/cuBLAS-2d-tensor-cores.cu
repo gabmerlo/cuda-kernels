@@ -52,8 +52,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     int local_warp_index = threadIdx.y/2;
     int actual = 0;
 
-    __shared__ half shared_memory_1[2][BM][BK];
-    __shared__ half shared_memory_2[2][BK][BN];
+    __shared__ half shared_memory_1[2][BM][BK+8];
+    __shared__ half shared_memory_2[2][BK][BN+8];
 
 
     //Primera fase
@@ -136,11 +136,11 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
         for (int i = 0; i < BK/tensor_K; i ++){
 
             for (int j = 0; j < W_tile_M/tensor_M; j++){
-                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/4)*64 + j*tensor_K][i*tensor_K], BK);
+                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/4)*64 + j*tensor_K][i*tensor_K], BK + 8);
             }
 
             for (int j = 0; j < W_tile_N/tensor_N; j++){
-                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[1-actual][i*tensor_K][(local_warp_index%4)*(BN/4) + j*tensor_K], BN);
+                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[1-actual][i*tensor_K][(local_warp_index%4)*(BN/4) + j*tensor_K], BN + 8);
             }
 
             for(int j = 0; j < dim_WM; j++){
@@ -185,11 +185,11 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     for (int i = 0; i < BK/tensor_K; i ++){
 
             for (int j = 0; j < W_tile_M/tensor_M; j++){
-                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/4)*(BM/2) + j*tensor_K][i*tensor_K], BK);
+                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/4)*(BM/2) + j*tensor_K][i*tensor_K], BK + 8);
             }
 
             for (int j = 0; j < W_tile_N/tensor_N; j++){
-                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[1-actual][i*tensor_K][(local_warp_index%4)*(BN/4) + j*tensor_K], BN);
+                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[1-actual][i*tensor_K][(local_warp_index%4)*(BN/4) + j*tensor_K], BN + 8);
             }
 
             for(int j = 0; j < dim_WM; j++){
