@@ -38,8 +38,9 @@ random_device rd;
 mt19937 gen(rd());
 uniform_real_distribution<float> dist(-2.0, 2.0);
 
+struct __align__(8) half4 { half x, y, z, w; };
 
-__global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, int B_num_fil, int B_num_col,float *B, float *C){
+__global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half *A, int B_num_fil, int B_num_col,const half *B, float *C){
 
 
     wmma::fragment<wmma::matrix_a, tensor_M,tensor_N,tensor_K,half, wmma::row_major> a_fragment[dim_WM];
@@ -70,8 +71,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
     int B_tile_col = global_column;
     int B_tile_row = 0; // i * tensor_K;
 
-    float4 store_values_a[carga_cada_thread];
-    float4 store_values_b[carga_cada_thread];
+    half4 store_values_a[carga_cada_thread];
+    half4 store_values_b[carga_cada_thread];
 
     //Esto era usado por thread pero lo dejo comentado por si me inspira
     //Position inside the dim3 threads adapted to fit A
@@ -93,8 +94,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
         a_pointer = A_tile_row * A_num_col + A_tile_col + a_col + a_row*A_num_col;
         b_pointer = B_tile_row * B_num_col + B_tile_col + b_col + b_row*B_num_col;
 
-        float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
-        float4 f4_b = reinterpret_cast<const float4*>(B)[b_pointer / 4];
+        half4 f4_a = reinterpret_cast<const half4*>(A)[a_pointer / 4];
+        half4 f4_b = reinterpret_cast<const half4*>(B)[b_pointer / 4];
 
         shared_memory_1[actual][a_row][a_col + 0] = f4_a.x;
         shared_memory_1[actual][a_row][a_col + 1] = f4_a.y;
@@ -128,8 +129,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,float *A, i
             a_pointer = A_tile_row * A_num_col + A_tile_col + a_col + a_row*A_num_col;
             b_pointer = B_tile_row * B_num_col + B_tile_col + b_col + b_row*B_num_col;
 
-            float4 f4_a = reinterpret_cast<const float4*>(A)[a_pointer / 4];
-            float4 f4_b = reinterpret_cast<const float4*>(B)[b_pointer / 4];
+            half4 f4_a = reinterpret_cast<const half4*>(A)[a_pointer / 4];
+            half4 f4_b = reinterpret_cast<const half4*>(B)[b_pointer / 4];
 
             store_values_a[i] = f4_a;
             store_values_b[i] = f4_b;
@@ -267,25 +268,33 @@ int main(){
     //I usually remove this part if I'm working with 4096, but I reduce dimensions and leave this part if
     // I'm checking whether my code works or not.
 
-    float *d_A;
-    float *d_B;
+    float *d_Af;
+    float *d_Bf;
     float *d_C;
     float *d_C_cub;
-    half *d_Ah, *d_Bh;
+    half *d_Ah;
+    half *d_Bh;
+
+    // FP32 temporary buffers
+    cudaMalloc(&d_Af, bytes_A);
+    cudaMalloc(&d_Bf, bytes_B);
+
     cudaMalloc(&d_Ah, (size_t)N_A * sizeof(half));
     cudaMalloc(&d_Bh, (size_t)N_B * sizeof(half));
     
-
-    cudaMalloc(&d_A, bytes_A);
-    cudaMalloc(&d_B, bytes_B);
+    
+    cudaMalloc(&d_Af, bytes_A);
+    cudaMalloc(&d_Bf, bytes_B);
     cudaMalloc(&d_C, bytes_C);
     cudaMalloc(&d_C_cub, bytes_C);
     cublasCreate(&handle);
 
-    cudaMemcpy(d_A, h_A, bytes_A, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B, bytes_B, cudaMemcpyHostToDevice);
-    f32_to_f16<<<(N_A + 255) / 256, 256>>>(d_A, d_Ah, N_A);
-    f32_to_f16<<<(N_B + 255) / 256, 256>>>(d_B, d_Bh, N_B);
+    cudaMemcpy(d_Af, h_A, bytes_A, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_Bf, h_B, bytes_B, cudaMemcpyHostToDevice);
+
+
+    f32_to_f16<<<(N_A + 255) / 256, 256>>>(d_Af, d_Ah, N_A);
+    f32_to_f16<<<(N_B + 255) / 256, 256>>>(d_Bf, d_Bh, N_B);
     cudaDeviceSynchronize();
     
     dim3 threads(16,16);
@@ -298,8 +307,8 @@ int main(){
     for (int i = 0; i < 3; i++){
 
         blocktiling_2d_float4rb<<<blocks,threads>>>(
-            A_num_fil, A_num_col, d_A,
-            B_num_fil, B_num_col, d_B, d_C
+            A_num_fil, A_num_col, d_Ah,
+            B_num_fil, B_num_col, d_Bh, d_C
         );
 
         cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
@@ -319,23 +328,23 @@ int main(){
     float times_2[N_ITER] = {0.0f};
 
     for (int i = 0; i < N_ITER; i++) {
-        cudaEventRecord(start);
 
         cudaEventRecord(start);
-        blocktiling_2d_float4rb<<<blocks,threads>>>(A_num_fil, A_num_col, d_A, B_num_fil, B_num_col, d_B, d_C);
+        blocktiling_2d_float4rb<<<blocks,threads>>>(A_num_fil, A_num_col, d_Ah, B_num_fil, B_num_col, d_Bh, d_C);
         cudaEventRecord(stop);
         cudaEventSynchronize(stop);
         cudaEventElapsedTime(&times_2[i], start, stop);
-    }
 
-    for (int i = 0; i < N_ITER; i++) {
         cudaEventRecord(start);
         cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
              d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
         cudaEventRecord(stop);
         cudaEventSynchronize(stop);
         cudaEventElapsedTime(&times[i], start, stop);
+    
     }
+
+
 
     double flops = 2.0 * A_num_fil * B_num_col * A_num_col;
 
@@ -359,9 +368,10 @@ int main(){
     }
     printf("Max abs diff: %g  (at index %d)\n", max_diff, bad_index);
 
-    cudaFree(d_A);
-    cudaFree(d_B);
+    cudaFree(d_Af);
+    cudaFree(d_Bf);
     cudaFree(d_C);
+    cudaFree(d_C_cub);
 
     for(int i = 0; i < 5; i ++){
         printf("%f\n",h_C_2[i]);
