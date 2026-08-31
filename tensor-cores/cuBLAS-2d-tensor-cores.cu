@@ -85,8 +85,10 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
     int b_pointer = 0;
     //Thread Distribution inside A fragment
     for(int i = 0; i < carga_cada_thread; i ++){
-        int a_col = (threadIdx.x%8)*4;
-        int a_row = threadIdx.y*2 + i*32 + threadIdx.x/8;
+        int id_thread = threadIdx.y*16 + threadIdx.x;
+
+        int a_col = ((threadIdx.y*16 + threadIdx.x)%8)*4;
+        int a_row = (((threadIdx.y*16 + threadIdx.x)/8)%8)*4 + ((threadIdx.y*16 + threadIdx.x)/8)/8 + i*32;
 
         int b_row = threadIdx.y/2 + i*8;
         int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
