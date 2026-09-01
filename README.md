@@ -1,12 +1,12 @@
 # CUDA kernels journey
 
-In this repository, you can see my progress from my very first matmul, which achieved **355.9 GFLOP/s** (**5% of cuBLAS performance**), to my latest SGEMM kernel, which reaches **4317 GFLOP/s**, **92.9% of cuBLAS**, on an NVIDIA Tesla T4 running at 70.00 W and 1590 MHz.
+In this repository, you can see my progress from my very first matmul, which achieved **355.9 GFLOP/s** (**5% of cuBLAS performance**), to my SGEMM kernel, which reaches **4317 GFLOP/s**, **92.9% of cuBLAS**, and now my latest tensor core kernel, which reaches **18796 GFLOP/s**, **64.7% of cuBLAS**, on an NVIDIA Tesla T4 in Google Colab.
 
 cuBLAS is NVIDIA's own optimized library for matrix multiplication, so I use it to see how close my kernels get to NVIDIA's own implementation on the same operation as me.
 
-But my SGEMM kernel with `alpha = 1` and `beta = 0` on A `4096x2048` and `2048x4096` is not intended to be my best kernel, as my only objective with this repository is to learn, so what's most likely is that I will be adding more kernels in the future.
+But neither my SGEMM nor my tensor core kernel with `alpha = 1` and `beta = 0` on A `4096x2048` and B `2048x4096` are intended to be my best kernels, as my only objective with this repository is to learn, so what's most likely is that I will be adding more kernels in the future.
 
-For that reason, the code I show here is not perfect, you can see this both in the current code, which I am still trying to improve, and especially throughout my commit history, where I gradually improved my matmul **from 5% of cuBLAS to 92.9% of cuBLAS**, correcting many, many, mistakes, as I learned new concepts and implemented stuff by hand.
+For that reason, the code I show here is not perfect, you can see this both in the current code, which I am still trying to improve, and especially throughout my commit history, where I gradually improved my SGEMM **from 5% of cuBLAS to 92.9% of cuBLAS**, and later my tensor core kernel from **342.3 to 18796 GFLOP/s**, correcting many, many, mistakes, as I learned new concepts and implemented stuff by hand.
 
 One disclaimer that I want to make is that my measurements may not always be perfect, since until now I have worked mostly in Google Colab, and I have also changed both the matrix sizes and the benchmarking loops over time, however, I have tried to document all of those changes as thoroughly as possible along the way.
 
@@ -173,10 +173,49 @@ The remaining reports also showed zero spills, no shared-memory bank conflicts, 
 
 For me this is a reasonable place to close this branch of the project, not because the kernel cannot improve but because the remaining theoretical headroom is only around 11.6% even before considering how difficult perfect scheduling would be, continuing from here would mean spending much more time on register allocation and small instruction-level changes for a very different cost and benefit than the earlier optimizations.
 
+## Moving to tensor cores
+
+After closing my SGEMM work I started learning WMMA and tensor cores in [`naive-tensor_cores.cu`](tensor-cores/naive-tensor_cores.cu), where one warp works together on a 16x16x16 operation instead of every thread owning its own independent results like I was used to. My first functional version reached only **342.3 GFLOP/s** and still had an occasional wrong result because `__syncthreads()` was outside the K loop, so a thread could start replacing the shared-memory tile while it was still being used.
+
+## My tensor core performance so far
+
+| Kernel iteration | Changes | Best | Median |
+|---|---|---:|---:|
+| First WMMA | My first functional 16x16x16 implementation | 342.3 GFLOP/s | — |
+| Fixed tile loads | All 256 threads load the tile once instead of 8 times | 818.1 GFLOP/s | — |
+| One active warp | Stopped 8 warps from repeating the same tensor core work | 1516.2 GFLOP/s | — |
+| 2D blocktiling | 128x128 block tile, warp tiling and double buffering | 5743 GFLOP/s | 5641 GFLOP/s |
+| Shared padding | Added 8 half values to avoid bank conflicts | 8169 GFLOP/s | 7906 GFLOP/s |
+| Register loads | Kept the next tile in registers instead of local memory | 12537 GFLOP/s | 12269 GFLOP/s |
+| Half inputs | Removed the unnecessary float input path | **21184 GFLOP/s** | 14027 GFLOP/s |
+| Remapped A loads | Distributed the rows across shared-memory banks | 18796 GFLOP/s | **16257 GFLOP/s** |
+| cuBLAS reference | Same latest comparison | 29051 GFLOP/s | 25304 GFLOP/s |
+
+![Tensor core performance so far](assets/tensor-core-performance.svg)
+
+The first large speedups did not come from making the tensor cores do more, they came from noticing I was doing the same work many times. I originally made every thread loop 8 times while loading only 256 values with a 256-thread block, then every one of the 8 warps was also performing the exact same WMMA operation, fixing the first mistake reached **818.1 GFLOP/s** and letting only warp 0 compute in [`tiled_tensor_cores.cu`](tensor-cores/tiled_tensor_cores.cu) reached **1516.2 GFLOP/s**. That was much faster, but leaving 7 warps almost idle was obviously not where I wanted to stop.
+
+I then started [`2dblocktiling-tensor-cores.cu`](tensor-cores/2dblocktiling-tensor-cores.cu), using my previous 2D blocktiling and double-buffering SGEMM as the base. This was a much bigger jump than my naïve file because the block owns a 128x128 output tile, each of its 8 warps owns a 64x32 section, and every warp keeps a 4x2 array of accumulator fragments:
+
+```cpp
+wmma::fragment<wmma::accumulator, 16, 16, 16, float>
+    accumulator_frag[dim_WM][dim_WN];
+```
+
+Adapting all my previous techniques at the same time, `float4` loads, double buffering, blocktiling and now warp mapping, made the indexing harder than I expected. One version compiled and reported **6147 GFLOP/s**, my highest result at the time, but its maximum difference was 319 and parts of C were still zero, so I did not count it. After fixing the dimensions and how the warps mapped the fragments, the first correct version reached **5743 GFLOP/s**.
+
+For the comparison in [`cuBLAS-2d-tensor-cores.cu`](tensor-cores/cuBLAS-2d-tensor-cores.cu) I use half inputs and float accumulation/output for both kernels. My first comparison was accidentally still using the old SGEMM cuBLAS call, which made my kernel look faster but was not the same operation, after changing it to `cublasGemmEx` with tensor ops the real difference became clear: **5797 against 31721 GFLOP/s**, or about 18% using the best launches.
+
+The next improvement was again shared-memory padding, this time I had to change both the declarations and the leading dimensions passed to `wmma::load_matrix_sync`, because changing only the shared arrays produced `inf` differences. Adding 8 half values moved the best result from **5797 to 8169 GFLOP/s** just by avoiding those bank conflicts.
+
+I later found that my arrays for the next tile, `store_values_a` and `store_values_b`, were going through local memory because the compiler was not scalarizing them into registers. Making their sizes compile-time constants allowed SROA/mem2reg to work, increased the reported use to 131 registers, and reached **12537 GFLOP/s**. After that I changed the kernel inputs from float to half, the WMMA fragments and cuBLAS were already working with half and the conversion happens outside the measured region, using the same half data directly brought my best launch to **21184 GFLOP/s**, around 65% of cuBLAS.
+
+My latest work has been guided by Nsight Compute. At first I thought low compute and memory throughput meant I should reduce shared-memory use and try to fit another block, but L1/TEX was already around 80% and the profiler pointed to shared-memory conflicts first. The old mapping sent consecutive groups of threads to consecutive rows of A, I replaced it with a mapping that separates those groups across the banks, which moved the median from **14027 to 16257 GFLOP/s**. The best launch is lower and cuBLAS was also slower in that Colab run, but in the direct latest comparison the kernel reaches **64.7% of cuBLAS**, and removing or reducing the double buffer is the next thing I want to explore.
+
 ## Benchmark notes
 
-All these numbers are kernel-only measurements recorded on an NVIDIA T4 in Google Colab, the profiled launch used for the clock-specific ceiling sustained around 941 MHz under the 70 W limit while other runs can report different clocks, the early kernels and the first 4x4 blocktiling used smaller matrices while the newer 8x8 and double-buffering kernels use `4096x2048 * 2048x4096`, so the graph marks where that benchmark shape changed.
+All these numbers are kernel-only measurements recorded on an NVIDIA T4 in Google Colab, the profiled SGEMM launch used for the clock-specific ceiling sustained around 941 MHz under the 70 W limit while other runs can report different clocks, the early SGEMM kernels, the first 4x4 blocktiling and the naïve tensor core kernel used smaller matrices while the newer SGEMM and tensor core kernels use `4096x2048 * 2048x4096`, so the comparisons are most useful inside each stage and the commit history contains the exact setup.
 
-The kernels are still written for the aligned dimensions used in their tests and do not handle arbitrary leftover M, N or K tiles yet, the result checks compare the complete output against a CPU reference or cuBLAS but there is still benchmark variance and the commit history contains the exact results and failed versions behind this summary.
+The kernels are still written for the aligned dimensions used in their tests and do not handle arbitrary leftover M, N or K tiles yet, the result checks compare the complete output against a CPU reference or cuBLAS but there is still benchmark variance. The SGEMM comparisons use float inputs and outputs while the tensor core comparison uses half inputs with float accumulation and output, so their GFLOP/s should not be read as a direct comparison between the two datatypes.
 
 I used model help for parts of the benchmark code and for organizing parts of this README, the kernels and their indexing/debugging are my work.
