@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cublas_v2.h>
 #include <thread>
+#include <cstdlib>
 
 constexpr int BM = 128;
 constexpr int BN = 128;
@@ -189,6 +190,12 @@ void report(const char* nombre, float* t, int n, double flops) {
             t[n/2], flops/(t[n/2]/1000.0)/1e9);
     }
 
+void check_error(cudaError_t error){
+    if(error != cudaSuccess){
+        printf("Error: %s\n", cudaGetErrorString(error));
+    }
+}
+
 int main(){
 
 
@@ -225,10 +232,24 @@ int main(){
     float *d_C;
     float *d_C_cub;
 
-    cudaMalloc(&d_A, bytes_A);
-    cudaMalloc(&d_B, bytes_B);
-    cudaMalloc(&d_C, bytes_C);
-    cudaMalloc(&d_C_cub, bytes_C);
+    //Checking requirements:
+    // (a_pointer % 4) == 0
+    //
+    
+    
+    cudaError_t error = cudaMalloc(&d_A, bytes_A);
+    if(error == cudaSuccess){
+        printf("Everything went right: %s\n", cudaGetErrorString(error));
+    }
+    else{
+        printf("Something went wrong: %s\n", cudaGetErrorString(error));
+    }
+
+    printf("Output de cudaMalloc: %d\n", error);
+
+    check_error(cudaMalloc(&d_B, bytes_B));
+    check_error(cudaMalloc(&d_C, bytes_C));
+    check_error(cudaMalloc(&d_C_cub, bytes_C));
     cublasCreate(&handle);
 
     cudaMemcpy(d_A, h_A, bytes_A, cudaMemcpyHostToDevice);
