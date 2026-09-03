@@ -7,6 +7,7 @@
 #include <cublas_v2.h>
 #include <thread>
 #include <cstdlib>
+#define CUDA_CHECK(caller) check_error((caller),__LINE__,__FILE__)
 
 constexpr int BM = 128;
 constexpr int BN = 128;
@@ -190,9 +191,10 @@ void report(const char* nombre, float* t, int n, double flops) {
             t[n/2], flops/(t[n/2]/1000.0)/1e9);
     }
 
-void check_error(cudaError_t error){
+void check_error(cudaError_t error, int line, const char* file){
     if(error != cudaSuccess){
-        printf("Error: %s\n", cudaGetErrorString(error));
+        printf("\nError: %s\nFound at line: %d\nIn the file: %s\n", cudaGetErrorString(error), line, file);
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -235,25 +237,17 @@ int main(){
     //Checking requirements:
     // (a_pointer % 4) == 0
     //
-    
-    
-    cudaError_t error = cudaMalloc(&d_A, bytes_A);
-    if(error == cudaSuccess){
-        printf("Everything went right: %s\n", cudaGetErrorString(error));
-    }
-    else{
-        printf("Something went wrong: %s\n", cudaGetErrorString(error));
-    }
 
-    printf("Output de cudaMalloc: %d\n", error);
 
-    check_error(cudaMalloc(&d_B, bytes_B));
-    check_error(cudaMalloc(&d_C, bytes_C));
-    check_error(cudaMalloc(&d_C_cub, bytes_C));
+    CUDA_CHECK(cudaMalloc(&d_A, bytes_A));
+
+    CUDA_CHECK(cudaMalloc(&d_B, bytes_B));
+    CUDA_CHECK(cudaMalloc(&d_C, bytes_C));
+    CUDA_CHECK(cudaMalloc(&d_C_cub, bytes_C));
     cublasCreate(&handle);
 
-    cudaMemcpy(d_A, h_A, bytes_A, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B, bytes_B, cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_A, h_A, bytes_A, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_B, h_B, bytes_B, cudaMemcpyHostToDevice));
 
     dim3 threads(16,16);
     dim3 blocks(
@@ -309,8 +303,8 @@ int main(){
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
-    cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_C_cub, d_C_cub, bytes_C, cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_C_cub, d_C_cub, bytes_C, cudaMemcpyDeviceToHost));
 
     //New bench, to help me not miss anything
     double max_diff = 0.0;
