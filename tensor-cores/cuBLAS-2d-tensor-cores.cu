@@ -375,14 +375,6 @@ int main(){
     cudaFree(d_C);
     cudaFree(d_C_cub);
 
-    for(int i = 0; i < 5; i ++){
-        printf("%f\n",h_C_2[i]);
-    }
-    printf("Últimos: %f\n", h_C_2[N_C - 1]);
-    printf("Últimos: %f\n", h_C_2[N_C - 2]);
-    printf("Últimos: %f\n", h_C_2[N_C - 3]);
-    printf("Últimos: %f\n", h_C_2[N_C - 4]);
-
     return 0;
 
 }

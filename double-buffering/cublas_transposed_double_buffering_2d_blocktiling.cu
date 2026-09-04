@@ -321,14 +321,6 @@ int main(){
     cudaFree(d_C);
     cublasDestroy(handle);
 
-    for(int i = 0; i < 5; i ++){
-        printf("%f\n",h_C[i]);
-    }
-    printf("Últimos: %f\n", h_C[N_C - 1]);
-    printf("Últimos: %f\n", h_C[N_C - 2]);
-    printf("Últimos: %f\n", h_C[N_C - 3]);
-    printf("Últimos: %f\n", h_C[N_C - 4]);
-
     return 0;
 
 }
