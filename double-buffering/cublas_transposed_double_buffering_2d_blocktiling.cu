@@ -7,7 +7,7 @@
 #include <cublas_v2.h>
 #include <thread>
 #include <cstdlib>
-#define CUDA_CHECK(caller) check_error((caller),__LINE__,__FILE__)
+#define CUDA_CHECK(caller) check_error((caller),__LINE__,__FILE__, #caller)
 
 constexpr int BM = 128;
 constexpr int BN = 128;
@@ -191,9 +191,10 @@ void report(const char* nombre, float* t, int n, double flops) {
             t[n/2], flops/(t[n/2]/1000.0)/1e9);
     }
 
-void check_error(cudaError_t error, int line, const char* file){
+void check_error(cudaError_t error, int line, const char* file, const char* error_line){
     if(error != cudaSuccess){
-        printf("\nError: %s\nFound at line: %d\nIn the file: %s\n", cudaGetErrorString(error), line, file);
+        printf("\nOn line %d: %s",line, error_line);
+        printf("\nError: %s\nFound at file: %s\n", cudaGetErrorString(error), file);
         exit(EXIT_FAILURE);
     }
 }
@@ -241,7 +242,7 @@ int main(){
 
     CUDA_CHECK(cudaMalloc(&d_A, bytes_A));
 
-    CUDA_CHECK(cudaMalloc(&d_B, bytes_B));
+    CUDA_CHECK(cudaMalloc(&d_B, (size_t)1 << 60));
     CUDA_CHECK(cudaMalloc(&d_C, bytes_C));
     CUDA_CHECK(cudaMalloc(&d_C_cub, bytes_C));
     cublasCreate(&handle);
