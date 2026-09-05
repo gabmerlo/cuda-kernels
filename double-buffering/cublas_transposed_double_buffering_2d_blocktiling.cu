@@ -239,10 +239,15 @@ int main(){
     // (a_pointer % 4) == 0
     //
 
+    if(A_num_col != B_num_fil){
+        fprintf(stderr"\nDimensiones erróneas: A_col = %d, B_fil = %d\n", A_num_col, B_num_fil);
+        exit(EXIT_FAILURE);
+    }
+
 
     CUDA_CHECK(cudaMalloc(&d_A, bytes_A));
 
-    CUDA_CHECK(cudaMalloc(&d_B, (size_t)1 << 60));
+    CUDA_CHECK(cudaMalloc(&d_B, bytes_A));
     CUDA_CHECK(cudaMalloc(&d_C, bytes_C));
     CUDA_CHECK(cudaMalloc(&d_C_cub, bytes_C));
     cublasCreate(&handle);
@@ -263,6 +268,7 @@ int main(){
             A_num_fil, A_num_col, d_A,
             B_num_fil, B_num_col, d_B, d_C
         );
+        CUDA_CHECK(cudaGetLastError());
 
         cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
                 B_num_col, A_num_fil, A_num_col, &alfa, d_B, B_num_col, d_A, A_num_col, &beta_gemm, d_C_cub, B_num_col);
@@ -283,6 +289,7 @@ int main(){
     for (int i = 0; i < N_ITER; i++) {
     cudaEventRecord(start);
     blocktiling_2d_float4rb<<<blocks,threads>>>(A_num_fil, A_num_col, d_A, B_num_fil, B_num_col, d_B, d_C);
+    CUDA_CHECK(cudaGetLastError());
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&times_2[i], start, stop);
@@ -320,6 +327,14 @@ int main(){
     cudaFree(d_B);
     cudaFree(d_C);
     cublasDestroy(handle);
+
+    for(int i = 0; i < 5; i ++){
+        printf("%f\n",h_C[i]);
+    }
+    printf("Últimos: %f\n", h_C[N_C - 1]);
+    printf("Últimos: %f\n", h_C[N_C - 2]);
+    printf("Últimos: %f\n", h_C[N_C - 3]);
+    printf("Últimos: %f\n", h_C[N_C - 4]);
 
     return 0;
 

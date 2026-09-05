@@ -7,6 +7,8 @@
 #include <mma.h>
 #include <cublas_v2.h>
 #include <cuda_fp16.h>
+#include <cstdlib>
+#define CUDA_CHECK(call) check_error((call),__LINE__,__FILE__,#call)
 
 using namespace nvcuda;
 
@@ -234,6 +236,14 @@ void report(const char* nombre, float* t, int n, double flops) {
             t[n/2], flops/(t[n/2]/1000.0)/1e9);
     }
 
+void check_error(cudaError_t error, int line, const char* file, const char* error_line){
+    if(error != cudaSuccess){
+        printf("\nOn line %d: %s",line, error_line);
+        printf("\nError: %s\nFound at file: %s\n", cudaGetErrorString(error), file);
+        exit(EXIT_FAILURE);
+    }
+}
+
 int main(){
 
     int A_num_fil = 4096;
@@ -264,7 +274,7 @@ int main(){
         h_B[i] = dist(gen);
     }
 
-    
+
 
 
     //I usually remove this part if I'm working with 4096, but I reduce dimensions and leave this part if
@@ -278,27 +288,27 @@ int main(){
     half *d_Bh;
 
     // FP32 temporary buffers
-    cudaMalloc(&d_Af, bytes_A);
-    cudaMalloc(&d_Bf, bytes_B);
+    CUDA_CHECK(cudaMalloc(&d_Af, bytes_A));
+    CUDA_CHECK(cudaMalloc(&d_Bf, bytes_B));
 
-    cudaMalloc(&d_Ah, (size_t)N_A * sizeof(half));
-    cudaMalloc(&d_Bh, (size_t)N_B * sizeof(half));
-    
-    
-    cudaMalloc(&d_Af, bytes_A);
-    cudaMalloc(&d_Bf, bytes_B);
-    cudaMalloc(&d_C, bytes_C);
-    cudaMalloc(&d_C_cub, bytes_C);
+    CUDA_CHECK(cudaMalloc(&d_Ah, (size_t)N_A * sizeof(half)));
+    CUDA_CHECK(cudaMalloc(&d_Bh, (size_t)N_B * sizeof(half)));
+
+
+    CUDA_CHECK(cudaMalloc(&d_Af, bytes_A));
+    CUDA_CHECK(cudaMalloc(&d_Bf, bytes_B));
+    CUDA_CHECK(cudaMalloc(&d_C, bytes_C));
+    CUDA_CHECK(cudaMalloc(&d_C_cub, bytes_C));
     cublasCreate(&handle);
 
-    cudaMemcpy(d_Af, h_A, bytes_A, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_Bf, h_B, bytes_B, cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_Af, h_A, bytes_A, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_Bf, h_B, bytes_B, cudaMemcpyHostToDevice));
 
 
     f32_to_f16<<<(N_A + 255) / 256, 256>>>(d_Af, d_Ah, N_A);
     f32_to_f16<<<(N_B + 255) / 256, 256>>>(d_Bf, d_Bh, N_B);
     cudaDeviceSynchronize();
-    
+
     dim3 threads(16,16);
     dim3 blocks(
         (B_num_col + BN - 1)/BN,
@@ -312,6 +322,7 @@ int main(){
             A_num_fil, A_num_col, d_Ah,
             B_num_fil, B_num_col, d_Bh, d_C
         );
+        CUDA_CHECK(cudaGetLastError());
 
         cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
              d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
@@ -336,6 +347,7 @@ int main(){
         cudaEventRecord(stop);
         cudaEventSynchronize(stop);
         cudaEventElapsedTime(&times_2[i], start, stop);
+        CUDA_CHECK(cudaGetLastError());
 
         cudaEventRecord(start);
         cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
@@ -343,7 +355,7 @@ int main(){
         cudaEventRecord(stop);
         cudaEventSynchronize(stop);
         cudaEventElapsedTime(&times[i], start, stop);
-    
+
     }
 
 
@@ -358,8 +370,8 @@ int main(){
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
 
-    cudaMemcpy(h_C_2, d_C, bytes_C, cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_C, d_C_cub, bytes_C, cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_C_2, d_C, bytes_C, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_C, d_C_cub, bytes_C, cudaMemcpyDeviceToHost));
 
     //New bench, to help me not miss anything
     double max_diff = 0.0;
@@ -374,6 +386,7 @@ int main(){
     cudaFree(d_Bf);
     cudaFree(d_C);
     cudaFree(d_C_cub);
+
 
     return 0;
 
