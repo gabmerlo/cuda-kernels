@@ -244,6 +244,26 @@ int main(){
         exit(EXIT_FAILURE);
     }
 
+    if((A_num_col % BK) != 0){
+        fprintf(stderr, "A_num_col (%d) has to be a multiple of BK (%d)\n", A_num_col, BK);
+        exit(EXIT_FAILURE);
+    }
+
+    if((B_num_col % BN) != 0){
+        fprintf(stderr, "B_num_col (%d) has to be a multiple of BN (%d)\n", B_num_col, BN);
+        exit(EXIT_FAILURE);
+    }
+
+    if((A_num_fil % BM) != 0){
+        fprintf(stderr, "A_num_fil (%d) has to be a multiple of BM (%d)\n", A_num_fil, BM);
+        exit(EXIT_FAILURE);
+    }
+
+    if ((A_num_col % 4) != 0) {
+    fprintf(stderr, "A_num_col (%d) isn't be a multiple of 4 for float4 loads\n", A_num_col);
+    exit(EXIT_FAILURE);
+    }
+
 
     CUDA_CHECK(cudaMalloc(&d_A, bytes_A));
 

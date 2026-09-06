@@ -287,6 +287,32 @@ int main(){
     half *d_Ah;
     half *d_Bh;
 
+
+    if(A_num_col != B_num_fil){
+        fprintf(stderr"\nDimensiones erróneas: A_col = %d, B_fil = %d\n", A_num_col, B_num_fil);
+        exit(EXIT_FAILURE);
+    }
+
+    if((A_num_col % BK) != 0){
+        fprintf(stderr, "A_num_col (%d) has to be a multiple of BK (%d)\n", A_num_col, BK);
+        exit(EXIT_FAILURE);
+    }
+
+    if((B_num_col % BN) != 0){
+        fprintf(stderr, "B_num_col (%d) has to be a multiple of BN (%d)\n", B_num_col, BN);
+        exit(EXIT_FAILURE);
+    }
+
+    if((A_num_fil % BM) != 0){
+        fprintf(stderr, "A_num_fil (%d) has to be a multiple of BM (%d)\n", A_num_fil, BM);
+        exit(EXIT_FAILURE);
+    }
+
+    if ((A_num_col % 4) != 0) {
+    fprintf(stderr, "A_num_col (%d) isn't be a multiple of 4 for float4 loads\n", A_num_col);
+    exit(EXIT_FAILURE);
+    }
+
     // FP32 temporary buffers
     CUDA_CHECK(cudaMalloc(&d_Af, bytes_A));
     CUDA_CHECK(cudaMalloc(&d_Bf, bytes_B));
