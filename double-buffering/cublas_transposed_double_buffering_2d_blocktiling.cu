@@ -14,11 +14,14 @@ constexpr int BN = 128;
 constexpr int BK = 8;
 constexpr float alfa = 1.0f;
 constexpr float beta_gemm = 0.0f;
-
-
 constexpr int TM = 8;
 constexpr int TN = 8;
 constexpr int n_float = 4;
+
+static_assert(BM == TM*16, "BM has to be equal to TM *16 for the correct indexing of the tile");
+static_assert((BK % n_float) == 0, "BK has to be divisible by 4 to use correctly float4");
+
+
 
 using namespace std;
 
@@ -240,7 +243,7 @@ int main(){
     //
 
     if(A_num_col != B_num_fil){
-        fprintf(stderr"\nDimensiones erróneas: A_col = %d, B_fil = %d\n", A_num_col, B_num_fil);
+        fprintf(stderr, "\nDimensiones erróneas: A_col = %d, B_fil = %d\n", A_num_col, B_num_fil);
         exit(EXIT_FAILURE);
     }
 
@@ -259,8 +262,8 @@ int main(){
         exit(EXIT_FAILURE);
     }
 
-    if ((A_num_col % 4) != 0) {
-    fprintf(stderr, "A_num_col (%d) isn't be a multiple of 4 for float4 loads\n", A_num_col);
+    if ((B_num_col % 4) != 0) {
+    fprintf(stderr, "B_num_col (%d) isn't be a multiple of 4 for float4 loads\n", B_num_col);
     exit(EXIT_FAILURE);
     }
 
@@ -334,18 +337,25 @@ int main(){
     CUDA_CHECK(cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(h_C_cub, d_C_cub, bytes_C, cudaMemcpyDeviceToHost));
 
+
     //New bench, to help me not miss anything
     double max_diff = 0.0;
     int bad_index = -1;
     for (int i = 0; i < N_C; i++) {
-        double d = fabs((double)h_C[i] - (double)h_C_cub[i]);
+        double d = fabs((double)h_C[i] - (double)h_C_cub[i])/(fabs((double)h_C_cub[i]) + 1e-5);
         if (d > max_diff) { max_diff = d; bad_index = i; }
     }
     printf("Max abs diff: %g  (at index %d)\n", max_diff, bad_index);
 
-    cudaFree(d_A);
-    cudaFree(d_B);
-    cudaFree(d_C);
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_B));
+    CUDA_CHECK(cudaFree(d_C));
+    CUDA_CHECK(cudaFree(d_C_cub));
+    free(h_A);
+    free(h_B);
+    free(h_C);
+    free(h_C_cub);
+
     cublasDestroy(handle);
 
     for(int i = 0; i < 5; i ++){
