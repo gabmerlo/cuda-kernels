@@ -1,4 +1,8 @@
 %%writefile cudatensorcores.cu
+#if defined(__CUDA_ARCH__) and __CUDA_ARCH__ < 700
+#error "You require at least sm_70 to run this kernel"
+#endif
+
 #include <cstdio>
 #include <random>
 #include <chrono>
@@ -9,7 +13,7 @@
 #include <cuda_fp16.h>
 #include <cstdlib>
 #define CUDA_CHECK(call) check_error((call),__LINE__,__FILE__,#call)
-
+#define CUBLAS_CHECK(call) check_error_cuBLAS((call),__LINE__,__FILE__,#call)
 using namespace nvcuda;
 
 constexpr int BM = 128;
@@ -17,22 +21,22 @@ constexpr int BN = 128;
 constexpr int BK = 32;
 constexpr float alfa = 1.0f;
 constexpr float beta_gemm = 0.0f;
-
 constexpr int dim_WM = 4;
 constexpr int dim_WN = 2;
-
 constexpr int W_tile_M = 64;
 constexpr int W_tile_N = 32;
-
-
 constexpr int tensor_M = 16;
 constexpr int tensor_N = 16;
 constexpr int tensor_K = 16;
 constexpr int num_threads = 256;
-
 constexpr int n_float = 4;
-
 constexpr int carga_cada_thread = (BM * BK) / (num_threads * n_float);
+constexpr int padding = 8;
+constexpr int loadas = BK + padding;
+constexpr int loadbs = BN + padding;
+
+static_assert(loadas%8 == 0, "BK + Padding debe de ser divisible por 8 para que funcione el kernel");
+static_assert(loadbs%8 == 0, "BN + Padding debe de ser divisible por 8 para que funcione el kernel");
 
 using namespace std;
 
@@ -87,8 +91,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
     int b_pointer = 0;
     //Thread Distribution inside A fragment
     for(int i = 0; i < carga_cada_thread; i ++){
-        int id_thread = threadIdx.y*16 + threadIdx.x;
-
+        
         int a_col = ((threadIdx.y*16 + threadIdx.x)%8)*4;
         int a_row = (((threadIdx.y*16 + threadIdx.x)/8)%8)*4 + ((threadIdx.y*16 + threadIdx.x)/8)/8 + i*32;
 
@@ -244,7 +247,39 @@ void check_error(cudaError_t error, int line, const char* file, const char* erro
     }
 }
 
+
+//I imported this function from a website to get the equivalent of cudaGetErrorString for cuBLAS
+const char* cublas_error_string(cublasStatus_t s){
+    switch(s){
+        case CUBLAS_STATUS_SUCCESS:          return "CUBLAS_STATUS_SUCCESS";
+        case CUBLAS_STATUS_NOT_INITIALIZED:  return "CUBLAS_STATUS_NOT_INITIALIZED";
+        case CUBLAS_STATUS_ALLOC_FAILED:     return "CUBLAS_STATUS_ALLOC_FAILED";
+        case CUBLAS_STATUS_INVALID_VALUE:    return "CUBLAS_STATUS_INVALID_VALUE";
+        case CUBLAS_STATUS_ARCH_MISMATCH:    return "CUBLAS_STATUS_ARCH_MISMATCH";
+        case CUBLAS_STATUS_EXECUTION_FAILED: return "CUBLAS_STATUS_EXECUTION_FAILED";
+        case CUBLAS_STATUS_NOT_SUPPORTED:    return "CUBLAS_STATUS_NOT_SUPPORTED";
+        default:                             return "unknown cublas error";
+    }
+}
+
+//This one I wrote myself with the latter
+void check_error_cuBLAS(cublasStatus_t error, int line, const char* file, const char* error_line){
+    if(error != CUBLAS_STATUS_SUCCESS){
+        printf("\nOn line %d: %s",line, error_line);
+        printf("\nError: %s\nFound at file: %s\n", cublas_error_string(error), file);
+        exit(EXIT_FAILURE);
+    }
+}
+
 int main(){
+
+    cudaDeviceProp prop;
+    CUDA_CHECK(cudaGetDeviceProperties(&prop,0));
+    if(prop.major < 7){
+        fprintf(stderr,"\nYour GPU is: %s (sm_%d%d) and you require at least sm_70 \
+        to run this kernel\n", prop.name, prop.major, prop.minor);
+        exit(EXIT_FAILURE);
+    }
 
     int A_num_fil = 4096;
     int A_num_col = 2048;
@@ -289,7 +324,7 @@ int main(){
 
 
     if(A_num_col != B_num_fil){
-        fprintf(stderr"\nDimensiones erróneas: A_col = %d, B_fil = %d\n", A_num_col, B_num_fil);
+        fprintf(stderr,"\nDimensiones erróneas: A_col = %d, B_fil = %d\n", A_num_col, B_num_fil);
         exit(EXIT_FAILURE);
     }
 
@@ -320,12 +355,9 @@ int main(){
     CUDA_CHECK(cudaMalloc(&d_Ah, (size_t)N_A * sizeof(half)));
     CUDA_CHECK(cudaMalloc(&d_Bh, (size_t)N_B * sizeof(half)));
 
-
-    CUDA_CHECK(cudaMalloc(&d_Af, bytes_A));
-    CUDA_CHECK(cudaMalloc(&d_Bf, bytes_B));
     CUDA_CHECK(cudaMalloc(&d_C, bytes_C));
     CUDA_CHECK(cudaMalloc(&d_C_cub, bytes_C));
-    cublasCreate(&handle);
+    CUBLAS_CHECK(cublasCreate(&handle));
 
     CUDA_CHECK(cudaMemcpy(d_Af, h_A, bytes_A, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_Bf, h_B, bytes_B, cudaMemcpyHostToDevice));
@@ -341,6 +373,9 @@ int main(){
         (A_num_fil + BM - 1)/BM
     );
 
+    CUDA_CHECK(cudaMemset(d_C, 0, bytes_C));
+    CUDA_CHECK(cudaMemset(d_C_cub, 0, bytes_C));
+
     //Calentamiento
     for (int i = 0; i < 3; i++){
 
@@ -350,8 +385,8 @@ int main(){
         );
         CUDA_CHECK(cudaGetLastError());
 
-        cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
-             d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+        CUBLAS_CHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
+             d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
 
     }
 
@@ -376,8 +411,8 @@ int main(){
         CUDA_CHECK(cudaGetLastError());
 
         cudaEventRecord(start);
-        cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
-             d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+        CUBLAS_CHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
+             d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));        
         cudaEventRecord(stop);
         cudaEventSynchronize(stop);
         cudaEventElapsedTime(&times[i], start, stop);
@@ -399,17 +434,25 @@ int main(){
     CUDA_CHECK(cudaMemcpy(h_C_2, d_C, bytes_C, cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(h_C, d_C_cub, bytes_C, cudaMemcpyDeviceToHost));
 
+    printf("d_C=%p  d_C_cub=%p\n", (void*)d_C, (void*)d_C_cub);
+    printf("h_C[0]=%f  h_C_2[0]=%f\n", h_C[0], h_C_2[0]);
+    printf("h_C[5000]=%f  h_C_2[5000]=%f\n", h_C[5000], h_C_2[5000]);
+    printf("h_C[0]=%.9g  h_C_2[0]=%.9g\n", h_C[0], h_C_2[0]);
+    printf("iguales exactamente: %d\n", h_C[0] == h_C_2[0]);
+
     //New bench, to help me not miss anything
     double max_diff = 0.0;
     int bad_index = -1;
     for (int i = 0; i < N_C; i++) {
-        double d = fabs((double)h_C[i] - (double)h_C_2[i]);
+        double d = fabs((double)h_C[i] - (double)h_C_2[i])/(fabs((double)h_C[i]) + 1e-4);
         if (d > max_diff) { max_diff = d; bad_index = i; }
     }
-    printf("Max abs diff: %g  (at index %d)\n", max_diff, bad_index);
+    printf("Relative Error: %g  (at index %d)\n", max_diff, bad_index);
 
     cudaFree(d_Af);
     cudaFree(d_Bf);
+    cudaFree(d_Ah);
+    cudaFree(d_Bh);
     cudaFree(d_C);
     cudaFree(d_C_cub);
 

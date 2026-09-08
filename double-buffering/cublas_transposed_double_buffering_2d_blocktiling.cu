@@ -345,7 +345,7 @@ int main(){
         double d = fabs((double)h_C[i] - (double)h_C_cub[i])/(fabs((double)h_C_cub[i]) + 1e-5);
         if (d > max_diff) { max_diff = d; bad_index = i; }
     }
-    printf("Max abs diff: %g  (at index %d)\n", max_diff, bad_index);
+    printf("Relative Error: %g  (at index %d)\n", max_diff, bad_index);
 
     for(int i = 0; i < 5; i ++){
         printf("%f\n",h_C[i]);
@@ -355,7 +355,7 @@ int main(){
     printf("Últimos: %f\n", h_C[N_C - 3]);
     printf("Últimos: %f\n", h_C[N_C - 4]);
 
-    
+
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));
     CUDA_CHECK(cudaFree(d_C));
