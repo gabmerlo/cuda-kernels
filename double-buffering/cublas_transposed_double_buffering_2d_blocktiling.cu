@@ -347,6 +347,15 @@ int main(){
     }
     printf("Max abs diff: %g  (at index %d)\n", max_diff, bad_index);
 
+    for(int i = 0; i < 5; i ++){
+        printf("%f\n",h_C[i]);
+    }
+    printf("Últimos: %f\n", h_C[N_C - 1]);
+    printf("Últimos: %f\n", h_C[N_C - 2]);
+    printf("Últimos: %f\n", h_C[N_C - 3]);
+    printf("Últimos: %f\n", h_C[N_C - 4]);
+
+    
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));
     CUDA_CHECK(cudaFree(d_C));
@@ -357,14 +366,6 @@ int main(){
     free(h_C_cub);
 
     cublasDestroy(handle);
-
-    for(int i = 0; i < 5; i ++){
-        printf("%f\n",h_C[i]);
-    }
-    printf("Últimos: %f\n", h_C[N_C - 1]);
-    printf("Últimos: %f\n", h_C[N_C - 2]);
-    printf("Últimos: %f\n", h_C[N_C - 3]);
-    printf("Últimos: %f\n", h_C[N_C - 4]);
 
     return 0;
 
