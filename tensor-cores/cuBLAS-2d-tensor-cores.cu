@@ -91,7 +91,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
     int b_pointer = 0;
     //Thread Distribution inside A fragment
     for(int i = 0; i < carga_cada_thread; i ++){
-        
+
         int a_col = ((threadIdx.y*16 + threadIdx.x)%8)*4;
         int a_row = (((threadIdx.y*16 + threadIdx.x)/8)%8)*4 + ((threadIdx.y*16 + threadIdx.x)/8)/8 + i*32;
 
@@ -104,15 +104,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
         half4 f4_a = reinterpret_cast<const half4*>(A)[a_pointer / 4];
         half4 f4_b = reinterpret_cast<const half4*>(B)[b_pointer / 4];
 
-        shared_memory_1[actual][a_row][a_col + 0] = f4_a.x;
-        shared_memory_1[actual][a_row][a_col + 1] = f4_a.y;
-        shared_memory_1[actual][a_row][a_col + 2] = f4_a.z;
-        shared_memory_1[actual][a_row][a_col + 3] = f4_a.w;
-
-        shared_memory_2[actual][b_row][b_col + 0] = f4_b.x;
-        shared_memory_2[actual][b_row][b_col + 1] = f4_b.y;
-        shared_memory_2[actual][b_row][b_col + 2] = f4_b.z;
-        shared_memory_2[actual][b_row][b_col + 3] = f4_b.w;
+        *reinterpret_cast<half4*>(&shared_memory_1[actual][a_row][a_col]) = f4_a;
+        *reinterpret_cast<half4*>(&shared_memory_2[actual][b_row][b_col]) = f4_b;
 
         __syncthreads();
 
@@ -172,15 +165,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
             int b_row = threadIdx.y/2 + i*8;
             int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
 
-            shared_memory_1[actual][a_row][a_col + 0] = store_values_a[i].x;
-            shared_memory_1[actual][a_row][a_col + 1] = store_values_a[i].y;
-            shared_memory_1[actual][a_row][a_col + 2] = store_values_a[i].z;
-            shared_memory_1[actual][a_row][a_col + 3] = store_values_a[i].w;
-
-            shared_memory_2[actual][b_row][b_col + 0] = store_values_b[i].x;
-            shared_memory_2[actual][b_row][b_col + 1] = store_values_b[i].y;
-            shared_memory_2[actual][b_row][b_col + 2] = store_values_b[i].z;
-            shared_memory_2[actual][b_row][b_col + 3] = store_values_b[i].w;
+            *reinterpret_cast<half4*>(&shared_memory_1[actual][a_row][a_col]) = store_values_a[i];
+            *reinterpret_cast<half4*>(&shared_memory_2[actual][b_row][b_col]) = store_values_b[i];
         }
 
 
@@ -412,7 +398,7 @@ int main(){
 
         cudaEventRecord(start);
         CUBLAS_CHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
-             d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));        
+             d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
         cudaEventRecord(stop);
         cudaEventSynchronize(stop);
         cudaEventElapsedTime(&times[i], start, stop);
