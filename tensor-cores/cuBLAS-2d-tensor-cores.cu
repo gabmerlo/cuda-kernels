@@ -107,9 +107,9 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
         *reinterpret_cast<half4*>(&shared_memory_1[actual][a_row][a_col]) = f4_a;
         *reinterpret_cast<half4*>(&shared_memory_2[actual][b_row][b_col]) = f4_b;
 
-        __syncthreads();
-
 }
+
+    __syncthreads();
     actual = 1 - actual;
 
 
