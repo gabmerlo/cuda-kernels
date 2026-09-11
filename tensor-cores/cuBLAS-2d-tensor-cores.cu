@@ -18,7 +18,7 @@ using namespace nvcuda;
 
 constexpr int BM = 128;
 constexpr int BN = 128;
-constexpr int BK = 32;
+constexpr int BK = 16;
 constexpr float alfa = 1.0f;
 constexpr float beta_gemm = 0.0f;
 constexpr int dim_WM = 4;
@@ -46,7 +46,7 @@ uniform_real_distribution<float> dist(-2.0, 2.0);
 
 struct __align__(8) half4 { half x, y, z, w; };
 
-__global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half *A, int B_num_fil, int B_num_col,const half *B, float *C){
+__global__ void __launch_bounds__(256,2) blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half *A, int B_num_fil, int B_num_col,const half *B, float *C){
 
 
     wmma::fragment<wmma::matrix_a, tensor_M,tensor_N,tensor_K,half, wmma::row_major> a_fragment[dim_WM];
@@ -62,8 +62,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
     int local_warp_index = threadIdx.y/2;
     int actual = 0;
 
-    __shared__ half shared_memory_1[2][BM][BK+8];
-    __shared__ half shared_memory_2[2][BK][BN+8];
+    __shared__ __align__(16) half shared_memory_1[2][BM][BK+8];
+    __shared__ __align__(16) half shared_memory_2[2][BK][BN+8];
 
 
     //Primera fase
@@ -92,8 +92,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
     //Thread Distribution inside A fragment
     for(int i = 0; i < carga_cada_thread; i ++){
 
-        int a_col = ((threadIdx.y*16 + threadIdx.x)%8)*4;
-        int a_row = (((threadIdx.y*16 + threadIdx.x)/8)%8)*4 + ((threadIdx.y*16 + threadIdx.x)/8)/8 + i*32;
+        int a_col = ((threadIdx.y*16 + threadIdx.x)%4)*4;
+        int a_row = (((threadIdx.y*16 + threadIdx.x)/4)%4)*2 + ((threadIdx.y*16 + threadIdx.x)/16)%2 + ((threadIdx.y*16 + threadIdx.x)/32)*8 + i*64;
 
         int b_row = threadIdx.y/2 + i*8;
         int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
@@ -110,6 +110,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
 }
 
     __syncthreads();
+
+
     actual = 1 - actual;
 
 
@@ -120,9 +122,9 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
 
 
         for(int i = 0; i < carga_cada_thread; i ++){
-            int a_col = ((threadIdx.y*16 + threadIdx.x)%8)*4;
-            int a_row = (((threadIdx.y*16 + threadIdx.x)/8)%8)*4 + ((threadIdx.y*16 + threadIdx.x)/8)/8 + i*32;
 
+            int a_col = ((threadIdx.y*16 + threadIdx.x)%4)*4;
+            int a_row = (((threadIdx.y*16 + threadIdx.x)/4)%4)*2 + ((threadIdx.y*16 + threadIdx.x)/16)%2 + ((threadIdx.y*16 + threadIdx.x)/32)*8 + i*64;
             int b_row = threadIdx.y/2 + i*8;
             int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
 
@@ -159,9 +161,9 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
 
         //repito mi código
         for(int i = 0; i < carga_cada_thread; i ++){
-            int a_col = ((threadIdx.y*16 + threadIdx.x)%8)*4;
-            int a_row = (((threadIdx.y*16 + threadIdx.x)/8)%8)*4 + ((threadIdx.y*16 + threadIdx.x)/8)/8 + i*32;
-
+            int a_col = ((threadIdx.y*16 + threadIdx.x)%4)*4;
+            int a_row = (((threadIdx.y*16 + threadIdx.x)/4)%4)*2 + ((threadIdx.y*16 + threadIdx.x)/16)%2 + ((threadIdx.y*16 + threadIdx.x)/32)*8 + i*64;
+            
             int b_row = threadIdx.y/2 + i*8;
             int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
 
