@@ -1,0 +1,450 @@
+%%writefile cudatensorcores.cu
+#if defined(__CUDA_ARCH__) and __CUDA_ARCH__ < 700
+#error "You require at least sm_70 to run this kernel"
+#endif
+
+#include <cstdio>
+#include <random>
+#include <chrono>
+#include <algorithm>
+#include <cmath>
+#include <mma.h>
+#include <cublas_v2.h>
+#include <cuda_fp16.h>
+#include <cstdlib>
+#define CUDA_CHECK(call) check_error((call),__LINE__,__FILE__,#call)
+#define CUBLAS_CHECK(call) check_error_cuBLAS((call),__LINE__,__FILE__,#call)
+using namespace nvcuda;
+
+constexpr int BM = 128;
+constexpr int BN = 128;
+constexpr int BK = 16;
+constexpr float alfa = 1.0f;
+constexpr float beta_gemm = 0.0f;
+constexpr int dim_WM = 4;
+constexpr int dim_WN = 2;
+constexpr int W_tile_M = 64;
+constexpr int W_tile_N = 32;
+constexpr int tensor_M = 16;
+constexpr int tensor_N = 16;
+constexpr int tensor_K = 16;
+constexpr int num_threads = 256;
+constexpr int n_float = 4;
+constexpr int carga_cada_thread = (BM * BK) / (num_threads * n_float);
+constexpr int padding = 8;
+constexpr int loadas = BK + padding;
+constexpr int loadbs = BN + padding;
+
+static_assert(loadas%8 == 0, "BK + Padding debe de ser divisible por 8 para que funcione el kernel");
+static_assert(loadbs%8 == 0, "BN + Padding debe de ser divisible por 8 para que funcione el kernel");
+
+using namespace std;
+
+random_device rd;
+mt19937 gen(rd());
+uniform_real_distribution<float> dist(-2.0, 2.0);
+
+struct __align__(8) half4 { half x, y, z, w; };
+
+__global__ void __launch_bounds__(256,2) blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half *A, int B_num_fil, int B_num_col,const half *B, float *C){
+
+
+    wmma::fragment<wmma::matrix_a, tensor_M,tensor_N,tensor_K,half, wmma::row_major> a_fragment[dim_WM];
+    wmma::fragment<wmma::matrix_b,tensor_M,tensor_N,tensor_K,half, wmma::row_major> b_fragment[dim_WN];
+    wmma::fragment<wmma::accumulator,tensor_M,tensor_N,tensor_K,float> accumulator_frag[dim_WM][dim_WN];
+
+    for(int i = 0; i < dim_WM; i ++){
+        for(int j = 0; j < dim_WN; j ++){
+            wmma::fill_fragment(accumulator_frag[i][j], 0.0f);
+        }
+    }
+
+    int local_warp_index = threadIdx.y/2;
+    int actual = 0;
+
+    __shared__ __align__(16) half shared_memory_1[2][BM][BK+8];
+    __shared__ __align__(16) half shared_memory_2[2][BK][BN+8];
+
+
+    //Primera fase
+
+    //Coordenadas iniciales de nuestro tile mientras va iterando
+    int global_column = blockIdx.x * BN;
+    int global_row = blockIdx.y * BM;
+
+    int A_tile_col = 0; // i * tensor_K;
+    int A_tile_row = global_row;
+    int B_tile_col = global_column;
+    int B_tile_row = 0; // i * tensor_K;
+
+    half4 store_values_a[carga_cada_thread];
+    half4 store_values_b[carga_cada_thread];
+
+    //Esto era usado por thread pero lo dejo comentado por si me inspira
+    //Position inside the dim3 threads adapted to fit A
+    // int col_pos_a = (threadIdx.x%(BK/n_float))*n_float;
+    // int row_pos_a = threadIdx.y*8 + threadIdx.x/2;
+
+    //I forgot to declare these
+
+    int a_pointer = 0;
+    int b_pointer = 0;
+    //Thread Distribution inside A fragment
+    for(int i = 0; i < carga_cada_thread; i ++){
+
+        int a_col = ((threadIdx.y*16 + threadIdx.x)%4)*4;
+        int a_row = (((threadIdx.y*16 + threadIdx.x)/4)%4)*2 + ((threadIdx.y*16 + threadIdx.x)/16)%2 + ((threadIdx.y*16 + threadIdx.x)/32)*8 + i*64;
+
+        int b_row = threadIdx.y/2 + i*8;
+        int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
+
+        a_pointer = A_tile_row * A_num_col + A_tile_col + a_col + a_row*A_num_col;
+        b_pointer = B_tile_row * B_num_col + B_tile_col + b_col + b_row*B_num_col;
+
+        half4 f4_a = reinterpret_cast<const half4*>(A)[a_pointer / 4];
+        half4 f4_b = reinterpret_cast<const half4*>(B)[b_pointer / 4];
+
+        *reinterpret_cast<half4*>(&shared_memory_1[actual][a_row][a_col]) = f4_a;
+        *reinterpret_cast<half4*>(&shared_memory_2[actual][b_row][b_col]) = f4_b;
+
+}
+
+    __syncthreads();
+
+
+    actual = 1 - actual;
+
+
+    for (int k = 1; k < (A_num_col / BK); k ++){
+
+        A_tile_col = k*BK;
+        B_tile_row = k*BK;
+
+
+        for(int i = 0; i < carga_cada_thread; i ++){
+
+            int a_col = ((threadIdx.y*16 + threadIdx.x)%4)*4;
+            int a_row = (((threadIdx.y*16 + threadIdx.x)/4)%4)*2 + ((threadIdx.y*16 + threadIdx.x)/16)%2 + ((threadIdx.y*16 + threadIdx.x)/32)*8 + i*64;
+            int b_row = threadIdx.y/2 + i*8;
+            int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
+
+            a_pointer = A_tile_row * A_num_col + A_tile_col + a_col + a_row*A_num_col;
+            b_pointer = B_tile_row * B_num_col + B_tile_col + b_col + b_row*B_num_col;
+
+            half4 f4_a = reinterpret_cast<const half4*>(A)[a_pointer / 4];
+            half4 f4_b = reinterpret_cast<const half4*>(B)[b_pointer / 4];
+
+            store_values_a[i] = f4_a;
+            store_values_b[i] = f4_b;
+}
+
+
+        for (int i = 0; i < BK/tensor_K; i ++){
+
+            for (int j = 0; j < W_tile_M/tensor_M; j++){
+                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/4)*64 + j*tensor_K][i*tensor_K], BK + 8);
+            }
+
+            for (int j = 0; j < W_tile_N/tensor_N; j++){
+                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[1-actual][i*tensor_K][(local_warp_index%4)*(BN/4) + j*tensor_K], BN + 8);
+            }
+
+            for(int j = 0; j < dim_WM; j++){
+                for (int t = 0; t < dim_WN; t ++){
+                    wmma::mma_sync(accumulator_frag[j][t],a_fragment[j],b_fragment[t],accumulator_frag[j][t]);
+                }
+            }
+
+    }
+
+    __syncthreads();
+
+        //repito mi código
+        for(int i = 0; i < carga_cada_thread; i ++){
+            int a_col = ((threadIdx.y*16 + threadIdx.x)%4)*4;
+            int a_row = (((threadIdx.y*16 + threadIdx.x)/4)%4)*2 + ((threadIdx.y*16 + threadIdx.x)/16)%2 + ((threadIdx.y*16 + threadIdx.x)/32)*8 + i*64;
+            
+            int b_row = threadIdx.y/2 + i*8;
+            int b_col = threadIdx.x*4 + (threadIdx.y%2)*64;
+
+            *reinterpret_cast<half4*>(&shared_memory_1[actual][a_row][a_col]) = store_values_a[i];
+            *reinterpret_cast<half4*>(&shared_memory_2[actual][b_row][b_col]) = store_values_b[i];
+        }
+
+
+        actual = 1 - actual;
+
+
+    __syncthreads();
+
+
+}
+    //Operando el último tile
+
+    for (int i = 0; i < BK/tensor_K; i ++){
+
+            for (int j = 0; j < W_tile_M/tensor_M; j++){
+                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/4)*(BM/2) + j*tensor_K][i*tensor_K], BK + 8);
+            }
+
+            for (int j = 0; j < W_tile_N/tensor_N; j++){
+                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[1-actual][i*tensor_K][(local_warp_index%4)*(BN/4) + j*tensor_K], BN + 8);
+            }
+
+            for(int j = 0; j < dim_WM; j++){
+                for (int t = 0; t < dim_WN; t ++){
+                    wmma::mma_sync(accumulator_frag[j][t],a_fragment[j],b_fragment[t],accumulator_frag[j][t]);
+                }
+            }
+
+    }
+
+    __syncthreads();
+
+    //subimos nuestros resultados, ya no uso float4
+
+    for (int j = 0; j < W_tile_M/tensor_M; j++){
+        for (int s = 0; s < W_tile_N/tensor_N; s++){
+
+            wmma::store_matrix_sync(&C[(global_row + (local_warp_index / 4)*64 + j*tensor_M)*B_num_col + (global_column + (local_warp_index % 4)*32  + s*tensor_N)],accumulator_frag[j][s],B_num_col,wmma::mem_row_major);
+        }
+    }
+
+
+
+
+}
+
+__global__ void f32_to_f16(const float* __restrict__ src, half* __restrict__ dst, size_t n) {
+    size_t i = blockIdx.x * (size_t)blockDim.x + threadIdx.x;
+    if (i < n) dst[i] = __float2half(src[i]);
+}
+
+void report(const char* nombre, float* t, int n, double flops) {
+        std::sort(t, t + n);
+        printf("%-8s  min %.3f ms (%.0f GFLOP/s)   mediana %.3f ms (%.0f GFLOP/s)\n",
+            nombre, t[0], flops/(t[0]/1000.0)/1e9,
+            t[n/2], flops/(t[n/2]/1000.0)/1e9);
+    }
+
+void check_error(cudaError_t error, int line, const char* file, const char* error_line){
+    if(error != cudaSuccess){
+        printf("\nOn line %d: %s",line, error_line);
+        printf("\nError: %s\nFound at file: %s\n", cudaGetErrorString(error), file);
+        exit(EXIT_FAILURE);
+    }
+}
+
+
+//I imported this function from a website to get the equivalent of cudaGetErrorString for cuBLAS
+const char* cublas_error_string(cublasStatus_t s){
+    switch(s){
+        case CUBLAS_STATUS_SUCCESS:          return "CUBLAS_STATUS_SUCCESS";
+        case CUBLAS_STATUS_NOT_INITIALIZED:  return "CUBLAS_STATUS_NOT_INITIALIZED";
+        case CUBLAS_STATUS_ALLOC_FAILED:     return "CUBLAS_STATUS_ALLOC_FAILED";
+        case CUBLAS_STATUS_INVALID_VALUE:    return "CUBLAS_STATUS_INVALID_VALUE";
+        case CUBLAS_STATUS_ARCH_MISMATCH:    return "CUBLAS_STATUS_ARCH_MISMATCH";
+        case CUBLAS_STATUS_EXECUTION_FAILED: return "CUBLAS_STATUS_EXECUTION_FAILED";
+        case CUBLAS_STATUS_NOT_SUPPORTED:    return "CUBLAS_STATUS_NOT_SUPPORTED";
+        default:                             return "unknown cublas error";
+    }
+}
+
+//This one I wrote myself with the latter
+void check_error_cuBLAS(cublasStatus_t error, int line, const char* file, const char* error_line){
+    if(error != CUBLAS_STATUS_SUCCESS){
+        printf("\nOn line %d: %s",line, error_line);
+        printf("\nError: %s\nFound at file: %s\n", cublas_error_string(error), file);
+        exit(EXIT_FAILURE);
+    }
+}
+
+int main(){
+
+    cudaDeviceProp prop;
+    CUDA_CHECK(cudaGetDeviceProperties(&prop,0));
+    if(prop.major < 7){
+        fprintf(stderr,"\nYour GPU is: %s (sm_%d%d) and you require at least sm_70 \
+        to run this kernel\n", prop.name, prop.major, prop.minor);
+        exit(EXIT_FAILURE);
+    }
+
+    int A_num_fil = 4096;
+    int A_num_col = 2048;
+    int B_num_fil = 2048;
+    int B_num_col = 4096;
+    int N_A = A_num_fil*A_num_col;
+    int N_B = B_num_fil*B_num_col;
+    int N_C = A_num_fil*B_num_col;
+    cublasHandle_t handle;
+
+    size_t bytes_A = (size_t)A_num_fil*A_num_col * sizeof(float);
+    size_t bytes_B = (size_t)B_num_fil*B_num_col * sizeof(float);
+    size_t bytes_C = (size_t)A_num_fil*B_num_col * sizeof(float);
+
+    float *h_A = (float*)malloc(bytes_A);
+    float *h_B = (float*)malloc(bytes_B);
+    float *h_C = (float*)malloc(bytes_C);
+    float *h_C_2 = (float*)malloc(bytes_C);
+
+
+
+    for (int i = 0; i < N_A; i ++){
+        h_A[i] = dist(gen);
+    }
+
+    for (int i = 0; i < N_B; i ++){
+        h_B[i] = dist(gen);
+    }
+
+
+
+
+    //I usually remove this part if I'm working with 4096, but I reduce dimensions and leave this part if
+    // I'm checking whether my code works or not.
+
+    float *d_Af;
+    float *d_Bf;
+    float *d_C;
+    float *d_C_cub;
+    half *d_Ah;
+    half *d_Bh;
+
+
+    if(A_num_col != B_num_fil){
+        fprintf(stderr,"\nDimensiones erróneas: A_col = %d, B_fil = %d\n", A_num_col, B_num_fil);
+        exit(EXIT_FAILURE);
+    }
+
+    if((A_num_col % BK) != 0){
+        fprintf(stderr, "A_num_col (%d) has to be a multiple of BK (%d)\n", A_num_col, BK);
+        exit(EXIT_FAILURE);
+    }
+
+    if((B_num_col % BN) != 0){
+        fprintf(stderr, "B_num_col (%d) has to be a multiple of BN (%d)\n", B_num_col, BN);
+        exit(EXIT_FAILURE);
+    }
+
+    if((A_num_fil % BM) != 0){
+        fprintf(stderr, "A_num_fil (%d) has to be a multiple of BM (%d)\n", A_num_fil, BM);
+        exit(EXIT_FAILURE);
+    }
+
+    if ((A_num_col % 4) != 0) {
+    fprintf(stderr, "A_num_col (%d) isn't be a multiple of 4 for float4 loads\n", A_num_col);
+    exit(EXIT_FAILURE);
+    }
+
+    // FP32 temporary buffers
+    CUDA_CHECK(cudaMalloc(&d_Af, bytes_A));
+    CUDA_CHECK(cudaMalloc(&d_Bf, bytes_B));
+
+    CUDA_CHECK(cudaMalloc(&d_Ah, (size_t)N_A * sizeof(half)));
+    CUDA_CHECK(cudaMalloc(&d_Bh, (size_t)N_B * sizeof(half)));
+
+    CUDA_CHECK(cudaMalloc(&d_C, bytes_C));
+    CUDA_CHECK(cudaMalloc(&d_C_cub, bytes_C));
+    CUBLAS_CHECK(cublasCreate(&handle));
+
+    CUDA_CHECK(cudaMemcpy(d_Af, h_A, bytes_A, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_Bf, h_B, bytes_B, cudaMemcpyHostToDevice));
+
+
+    f32_to_f16<<<(N_A + 255) / 256, 256>>>(d_Af, d_Ah, N_A);
+    f32_to_f16<<<(N_B + 255) / 256, 256>>>(d_Bf, d_Bh, N_B);
+    cudaDeviceSynchronize();
+
+    dim3 threads(16,16);
+    dim3 blocks(
+        (B_num_col + BN - 1)/BN,
+        (A_num_fil + BM - 1)/BM
+    );
+
+    CUDA_CHECK(cudaMemset(d_C, 0, bytes_C));
+    CUDA_CHECK(cudaMemset(d_C_cub, 0, bytes_C));
+
+    //Calentamiento
+    for (int i = 0; i < 3; i++){
+
+        blocktiling_2d_float4rb<<<blocks,threads>>>(
+            A_num_fil, A_num_col, d_Ah,
+            B_num_fil, B_num_col, d_Bh, d_C
+        );
+        CUDA_CHECK(cudaGetLastError());
+
+        CUBLAS_CHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
+             d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+
+    }
+
+    cudaDeviceSynchronize();
+
+
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    const int N_ITER = 50;
+    float times[N_ITER] = {0.0f};
+    float times_2[N_ITER] = {0.0f};
+
+    for (int i = 0; i < N_ITER; i++) {
+
+        cudaEventRecord(start);
+        blocktiling_2d_float4rb<<<blocks,threads>>>(A_num_fil, A_num_col, d_Ah, B_num_fil, B_num_col, d_Bh, d_C);
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&times_2[i], start, stop);
+        CUDA_CHECK(cudaGetLastError());
+
+        cudaEventRecord(start);
+        CUBLAS_CHECK(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, B_num_col, A_num_fil, A_num_col, &alfa, d_Bh, CUDA_R_16F, B_num_col,
+             d_Ah, CUDA_R_16F, A_num_col, &beta_gemm, d_C_cub, CUDA_R_32F, B_num_col, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&times[i], start, stop);
+
+    }
+
+
+
+    double flops = 2.0 * A_num_fil * B_num_col * A_num_col;
+
+
+    report("Tensor Core Kernel", times_2, N_ITER, flops);
+    report("GEMM cuBLAS", times, N_ITER, flops);
+
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+
+    CUDA_CHECK(cudaMemcpy(h_C_2, d_C, bytes_C, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_C, d_C_cub, bytes_C, cudaMemcpyDeviceToHost));
+
+    printf("d_C=%p  d_C_cub=%p\n", (void*)d_C, (void*)d_C_cub);
+    printf("h_C[0]=%f  h_C_2[0]=%f\n", h_C[0], h_C_2[0]);
+    printf("h_C[5000]=%f  h_C_2[5000]=%f\n", h_C[5000], h_C_2[5000]);
+    printf("h_C[0]=%.9g  h_C_2[0]=%.9g\n", h_C[0], h_C_2[0]);
+    printf("iguales exactamente: %d\n", h_C[0] == h_C_2[0]);
+
+    //New bench, to help me not miss anything
+    double max_diff = 0.0;
+    int bad_index = -1;
+    for (int i = 0; i < N_C; i++) {
+        double d = fabs((double)h_C[i] - (double)h_C_2[i])/(fabs((double)h_C[i]) + 1e-4);
+        if (d > max_diff) { max_diff = d; bad_index = i; }
+    }
+    printf("Relative Error: %g  (at index %d)\n", max_diff, bad_index);
+
+    cudaFree(d_Af);
+    cudaFree(d_Bf);
+    cudaFree(d_Ah);
+    cudaFree(d_Bh);
+    cudaFree(d_C);
+    cudaFree(d_C_cub);
+
+
+    return 0;
+
+}
