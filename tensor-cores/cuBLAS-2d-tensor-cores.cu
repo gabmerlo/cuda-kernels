@@ -31,7 +31,7 @@ constexpr int tensor_K = 16;
 constexpr int num_threads = 128;
 constexpr int n_float = 4;
 constexpr int carga_cada_thread = (BM * BK) / (num_threads * n_float);
-constexpr int padding = 8;
+constexpr int padding = 16;
 constexpr int loadas = BK + padding;
 constexpr int loadbs = BN + padding;
 
