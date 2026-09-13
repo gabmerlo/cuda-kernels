@@ -60,10 +60,10 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
     }
 
     int local_warp_index = threadIdx.y;
-    int actual = 0;
 
-    __shared__ half shared_memory_1[2][BM][BK+8];
-    __shared__ half shared_memory_2[2][BK][BN+8];
+
+    __shared__ half shared_memory_1[BM][BK+8];
+    __shared__ half shared_memory_2[BK][BN+8];
 
 
     //Primera fase
@@ -104,15 +104,14 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
         half4 f4_a = reinterpret_cast<const half4*>(A)[a_pointer / 4];
         half4 f4_b = reinterpret_cast<const half4*>(B)[b_pointer / 4];
 
-        *reinterpret_cast<half4*>(&shared_memory_1[actual][a_row][a_col]) = f4_a;
-        *reinterpret_cast<half4*>(&shared_memory_2[actual][b_row][b_col]) = f4_b;
+        *reinterpret_cast<half4*>(&shared_memory_1[a_row][a_col]) = f4_a;
+        *reinterpret_cast<half4*>(&shared_memory_2[b_row][b_col]) = f4_b;
 
         __syncthreads();
 
 }
 
     __syncthreads();
-    actual = 1 - actual;
 
 
     for (int k = 1; k < (A_num_col / BK); k ++){
@@ -142,11 +141,11 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
         for (int i = 0; i < BK/tensor_K; i ++){
 
             for (int j = 0; j < W_tile_M/tensor_M; j++){
-                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/2)*64 + j*tensor_K][i*tensor_K], BK + 8);
+                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[(local_warp_index/2)*64 + j*tensor_K][i*tensor_K], BK + 8);
             }
 
             for (int j = 0; j < dim_WN; j++){
-                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[1-actual][i*tensor_K][(local_warp_index%2)*(BN/2) + j*tensor_K], BN + 8);
+                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[i*tensor_K][(local_warp_index%2)*(BN/2) + j*tensor_K], BN + 8);
             }
 
             for(int j = 0; j < dim_WM; j++){
@@ -167,12 +166,9 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
             int b_row = threadIdx.y + i*4;
             int b_col = threadIdx.x*4;
 
-            *reinterpret_cast<half4*>(&shared_memory_1[actual][a_row][a_col]) = store_values_a[i];
-            *reinterpret_cast<half4*>(&shared_memory_2[actual][b_row][b_col]) = store_values_b[i];
+            *reinterpret_cast<half4*>(&shared_memory_1[a_row][a_col]) = store_values_a[i];
+            *reinterpret_cast<half4*>(&shared_memory_2[b_row][b_col]) = store_values_b[i];
         }
-
-
-        actual = 1 - actual;
 
 
     __syncthreads();
@@ -184,11 +180,11 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
     for (int i = 0; i < BK/tensor_K; i ++){
 
             for (int j = 0; j < W_tile_M/tensor_M; j++){
-                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[1-actual][(local_warp_index/2)*(BM/2) + j*tensor_K][i*tensor_K], BK + 8);
+                wmma::load_matrix_sync(a_fragment[j], &shared_memory_1[(local_warp_index/2)*(BM/2) + j*tensor_K][i*tensor_K], BK + 8);
             }
 
             for (int j = 0; j < dim_WN; j++){
-                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[1-actual][i*tensor_K][(local_warp_index%2)*(BN/2) + j*tensor_K], BN + 8);
+                wmma::load_matrix_sync(b_fragment[j], &shared_memory_2[i*tensor_K][(local_warp_index%2)*(BN/2) + j*tensor_K], BN + 8);
             }
 
             for(int j = 0; j < dim_WM; j++){
