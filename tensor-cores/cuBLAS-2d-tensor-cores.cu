@@ -107,8 +107,6 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
         *reinterpret_cast<half4*>(&shared_memory_1[a_row][a_col]) = f4_a;
         *reinterpret_cast<half4*>(&shared_memory_2[b_row][b_col]) = f4_b;
 
-        __syncthreads();
-
 }
 
     __syncthreads();
@@ -417,12 +415,6 @@ int main(){
 
     CUDA_CHECK(cudaMemcpy(h_C_2, d_C, bytes_C, cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaMemcpy(h_C, d_C_cub, bytes_C, cudaMemcpyDeviceToHost));
-
-    printf("d_C=%p  d_C_cub=%p\n", (void*)d_C, (void*)d_C_cub);
-    printf("h_C[0]=%f  h_C_2[0]=%f\n", h_C[0], h_C_2[0]);
-    printf("h_C[5000]=%f  h_C_2[5000]=%f\n", h_C[5000], h_C_2[5000]);
-    printf("h_C[0]=%.9g  h_C_2[0]=%.9g\n", h_C[0], h_C_2[0]);
-    printf("iguales exactamente: %d\n", h_C[0] == h_C_2[0]);
 
     //New bench, to help me not miss anything
     double max_diff = 0.0;
