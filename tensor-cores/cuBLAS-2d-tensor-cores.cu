@@ -94,17 +94,17 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
 
         int a_col = ((threadIdx.y*32 + threadIdx.x)%8)*4;
         int a_row = (threadIdx.y*32 + threadIdx.x)/8 + i*16;
+        a_pointer = A_tile_row * A_num_col + A_tile_col + a_col + a_row*A_num_col;
+        half4 f4_a = reinterpret_cast<const half4*>(A)[a_pointer / 4];
+        *reinterpret_cast<half4*>(&shared_memory_1[a_row][a_col]) = f4_a;
+    }
 
+    for(int i = 0; i < carga_cada_thread; i ++){
         int b_row = threadIdx.y + i*4;
         int b_col = threadIdx.x*4;
 
-        a_pointer = A_tile_row * A_num_col + A_tile_col + a_col + a_row*A_num_col;
         b_pointer = B_tile_row * B_num_col + B_tile_col + b_col + b_row*B_num_col;
-
-        half4 f4_a = reinterpret_cast<const half4*>(A)[a_pointer / 4];
         half4 f4_b = reinterpret_cast<const half4*>(B)[b_pointer / 4];
-
-        *reinterpret_cast<half4*>(&shared_memory_1[a_row][a_col]) = f4_a;
         *reinterpret_cast<half4*>(&shared_memory_2[b_row][b_col]) = f4_b;
 
 
@@ -413,6 +413,7 @@ int main(){
     report("Tensor Core Kernel", times_2, N_ITER, flops);
     report("GEMM cuBLAS", times, N_ITER, flops);
 
+    
 
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
