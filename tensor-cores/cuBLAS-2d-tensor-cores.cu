@@ -107,6 +107,7 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
         *reinterpret_cast<half4*>(&shared_memory_1[a_row][a_col]) = f4_a;
         *reinterpret_cast<half4*>(&shared_memory_2[b_row][b_col]) = f4_b;
 
+
 }
 
     __syncthreads();
@@ -161,10 +162,13 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
             int a_col = ((threadIdx.y*32 + threadIdx.x)%8)*4;
             int a_row = (threadIdx.y*32 + threadIdx.x)/8 + i*16;
 
+            *reinterpret_cast<half4*>(&shared_memory_1[a_row][a_col]) = store_values_a[i];
+        }
+
+        for(int i = 0; i < carga_cada_thread; i ++){
             int b_row = threadIdx.y + i*4;
             int b_col = threadIdx.x*4;
 
-            *reinterpret_cast<half4*>(&shared_memory_1[a_row][a_col]) = store_values_a[i];
             *reinterpret_cast<half4*>(&shared_memory_2[b_row][b_col]) = store_values_b[i];
         }
 
