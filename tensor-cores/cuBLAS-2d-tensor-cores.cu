@@ -92,8 +92,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
     //Thread Distribution inside A fragment
     for(int i = 0; i < carga_cada_thread; i ++){
 
-        int a_col = ((threadIdx.y*32 + threadIdx.x)%8)*4;
-        int a_row = (threadIdx.y*32 + threadIdx.x)/8 + i*16;
+        int a_col = ((threadIdx.y * 32 + threadIdx.x) % 8) * 4;
+        int a_row = threadIdx.y + (threadIdx.x / 8) * 4 + i * 16;
         a_pointer = A_tile_row * A_num_col + A_tile_col + a_col + a_row*A_num_col;
         half4 f4_a = reinterpret_cast<const half4*>(A)[a_pointer / 4];
         *reinterpret_cast<half4*>(&shared_memory_1[a_row][a_col]) = f4_a;
@@ -120,8 +120,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
 
 
         for(int i = 0; i < carga_cada_thread; i ++){
-            int a_col = ((threadIdx.y*32 + threadIdx.x)%8)*4;
-            int a_row = (threadIdx.y*32 + threadIdx.x)/8 + i*16;
+            int a_col = ((threadIdx.y*32 + threadIdx.x) %8) * 4;
+            int a_row = threadIdx.y + (threadIdx.x / 8) * 4 + i * 16;
 
             int b_row = threadIdx.y + i*4;
             int b_col = threadIdx.x*4;
@@ -159,8 +159,8 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
 
         //repito mi código
         for(int i = 0; i < carga_cada_thread; i ++){
-            int a_col = ((threadIdx.y*32 + threadIdx.x)%8)*4;
-            int a_row = (threadIdx.y*32 + threadIdx.x)/8 + i*16;
+            int a_col = ((threadIdx.y*32 + threadIdx.x) % 8) * 4;
+            int a_row = threadIdx.y + (threadIdx.x/8) *4 + i * 16;
 
             *reinterpret_cast<half4*>(&shared_memory_1[a_row][a_col]) = store_values_a[i];
         }
@@ -196,8 +196,6 @@ __global__ void blocktiling_2d_float4rb(int A_num_fil, int A_num_col,const half 
             }
 
     }
-
-    __syncthreads();
 
     //subimos nuestros resultados, ya no uso float4
 
