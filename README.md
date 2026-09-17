@@ -1,12 +1,12 @@
 # CUDA kernels journey
 
-In this repository, you can see my progress from my very first matmul, which achieved **355.9 GFLOP/s** (**5% of cuBLAS performance**), to my SGEMM kernel, which reaches **4317 GFLOP/s**, **92.9% of cuBLAS**, and now my latest tensor core kernel, which reaches **18796 GFLOP/s**, **64.7% of cuBLAS**, on an NVIDIA Tesla T4 in Google Colab.
+In this repository, you can see my progress from my very first matmul, which achieved **355.9 GFLOP/s** (**5% of cuBLAS performance**), to my SGEMM kernel, which reaches **4317 GFLOP/s**, **92.9% of cuBLAS**, and now my latest tensor core kernel, which reaches **21603 GFLOP/s**, **78.2% of cuBLAS**, on an NVIDIA Tesla T4 in Google Colab.
 
 cuBLAS is NVIDIA's own optimized library for matrix multiplication, so I use it to see how close my kernels get to NVIDIA's own implementation on the same operation as me.
 
 But neither my SGEMM nor my tensor core kernel with `alpha = 1` and `beta = 0` on A `4096x2048` and B `2048x4096` are intended to be my best kernels, as my only objective with this repository is to learn, so what's most likely is that I will be adding more kernels in the future.
 
-For that reason, the code I show here is not perfect, you can see this both in the current code, which I am still trying to improve, and especially throughout my commit history, where I gradually improved my SGEMM **from 5% of cuBLAS to 92.9% of cuBLAS**, and later my tensor core kernel from **342.3 to 18796 GFLOP/s**, correcting many, many, mistakes, as I learned new concepts and implemented stuff by hand.
+For that reason, the code I show here is not perfect, you can see this both in the current code, which I am still trying to improve, and especially throughout my commit history, where I gradually improved my SGEMM **from 5% of cuBLAS to 92.9% of cuBLAS**, and later my tensor core kernel from **342.3 to 21603 GFLOP/s**, correcting many, many, mistakes, as I learned new concepts and implemented stuff by hand.
 
 One disclaimer that I want to make is that my measurements may not always be perfect, since until now I have worked mostly in Google Colab, and I have also changed both the matrix sizes and the benchmarking loops over time, however, I have tried to document all of those changes as thoroughly as possible along the way.
 
@@ -189,7 +189,11 @@ After closing my SGEMM work I started learning WMMA and tensor cores in [`naive-
 | Register loads | Kept the next tile in registers instead of local memory | 12537 GFLOP/s | 12269 GFLOP/s |
 | Half inputs | Removed the unnecessary float input path | **21184 GFLOP/s** | 14027 GFLOP/s |
 | Remapped A loads | Distributed the rows across shared-memory banks | 18796 GFLOP/s | **16257 GFLOP/s** |
-| cuBLAS reference | Same latest comparison | 29051 GFLOP/s | 25304 GFLOP/s |
+| Prologue barrier cleanup | Removed three unnecessary `__syncthreads()` calls | 17533 GFLOP/s | 15441 GFLOP/s |
+| BK = 16 | Raised occupancy to 49.14%, but reduced throughput | 14975 GFLOP/s | 14376 GFLOP/s |
+| 64x64 warp tile | Increased arithmetic intensity | 17707 GFLOP/s | 17413 GFLOP/s |
+| Removed double buffering | Reduced shared memory to fit two resident blocks | **21603 GFLOP/s** | **18030 GFLOP/s** |
+| cuBLAS reference | Same latest comparison | 27615 GFLOP/s | 23059 GFLOP/s |
 
 ![Tensor core performance so far](assets/tensor-core-performance.svg)
 
@@ -210,7 +214,9 @@ The next improvement was again shared-memory padding, this time I had to change 
 
 I later found that my arrays for the next tile, `store_values_a` and `store_values_b`, were going through local memory because the compiler was not scalarizing them into registers. Making their sizes compile-time constants allowed SROA/mem2reg to work, increased the reported use to 131 registers, and reached **12537 GFLOP/s**. After that I changed the kernel inputs from float to half, the WMMA fragments and cuBLAS were already working with half and the conversion happens outside the measured region, using the same half data directly brought my best launch to **21184 GFLOP/s**, around 65% of cuBLAS.
 
-My latest work has been guided by Nsight Compute. At first I thought low compute and memory throughput meant I should reduce shared-memory use and try to fit another block, but L1/TEX was already around 80% and the profiler pointed to shared-memory conflicts first. The old mapping sent consecutive groups of threads to consecutive rows of A, I replaced it with a mapping that separates those groups across the banks, which moved the median from **14027 to 16257 GFLOP/s**. The best launch is lower and cuBLAS was also slower in that Colab run, but in the direct latest comparison the kernel reaches **64.7% of cuBLAS**, and removing or reducing the double buffer is the next thing I want to explore.
+My latest complete comparison removed double buffering after a 64x64 warp tile raised arithmetic intensity but left the kernel limited to one block by its **37.89 KB of shared memory per block**. Removing the second shared-memory tile allowed two resident blocks and moved the result from **17707 GFLOP/s best and 17413 median** to **21603 GFLOP/s best and 18030 median**. In the same run cuBLAS reached **27615 GFLOP/s best and 23059 median**, so the kernel reached about **78.2% of cuBLAS** using either comparison.
+
+The commits after that result focused on the remaining shared-memory conflict reports. Splitting the stores into separate loops reduced the measured duration from **4.46 ms to 4.42 ms**, cycles per instruction from **9.99 to 9.90**, and bank conflicts from **35.3% to 33.9%**. Splitting the initial load loop produced another **0.1% reduction in bank conflicts** and **0.01 ms reduction in duration**. The latest index refactor removed the remaining Nsight Compute bank-conflict warning and another unnecessary `__syncthreads()`, but no additional throughput improvement has been measured yet.
 
 ## Benchmark notes
 
