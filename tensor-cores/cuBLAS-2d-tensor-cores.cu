@@ -1,4 +1,3 @@
-%%writefile cudatensorcores.cu
 #if defined(__CUDA_ARCH__) and __CUDA_ARCH__ < 700
 #error "You require at least sm_70 to run this kernel"
 #endif

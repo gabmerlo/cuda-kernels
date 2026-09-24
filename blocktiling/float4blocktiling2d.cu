@@ -1,4 +1,3 @@
-%%writefile blocktiling-2d-float4rb.cu
 #include <cstdio>
 #include <random>
 #include <chrono>

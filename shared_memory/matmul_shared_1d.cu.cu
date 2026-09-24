@@ -1,4 +1,3 @@
-%%writefile tiled_matmul.cu
 #include <cstdio>
 #include <random>
 #include <chrono>

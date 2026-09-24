@@ -1,4 +1,3 @@
-%%writefile doublebuffersgemm.cu
 #include <cstdio>
 #include <random>
 #include <chrono>

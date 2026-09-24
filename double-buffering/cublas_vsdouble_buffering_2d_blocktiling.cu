@@ -1,4 +1,3 @@
-%%writefile doublebufferingcublass.cu
 #include <cstdio>
 #include <random>
 #include <chrono>
